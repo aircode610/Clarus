@@ -25,7 +25,7 @@ if "clarus_app" not in st.session_state:
     st.session_state.messages = []
     st.session_state.assertions = []
     st.session_state.deleted_assertions = []
-    st.session_state.current_mode = "idea_capture"
+    st.session_state.current_mode = "Idea Capture"
 
 def display_assertions(assertions: List[Assertion]):
     """Display the current assertions in a nice format."""
@@ -185,6 +185,12 @@ def idea_capture_tab():
                     )
                 else:
                     st.warning("No assertions to export")
+        
+        # Next button to go to Structure mode
+        st.markdown("---")
+        if st.button("➡️ Next: Structure Mode", help="Move to Structure mode to organize your assertions"):
+            st.session_state.current_mode = "Structure"
+            st.rerun()
 
 def structure_tab():
     """Structure mode - Edit and rearrange assertions with relationship analysis."""
@@ -323,6 +329,12 @@ def structure_tab():
             st.session_state.relationships = []
             st.session_state.structure_analysis_done = False
             st.rerun()
+    
+    # Next button to go to Review mode
+    st.markdown("---")
+    if st.button("➡️ Next: Review Mode", help="Move to Review mode to check for potential issues"):
+        st.session_state.current_mode = "Review"
+        st.rerun()
 
 
 def create_assertion_groups(assertions, relationships):
@@ -374,13 +386,34 @@ def review_tab():
     st.markdown("Review your assertions for potential issues like missing justification, vague language, or unclear logical flow.")
     
     st.info("🚧 Review mode is coming soon! This will flag potential issues in your assertions.")
+    
+    # Next button to go to Prose mode
+    st.markdown("---")
+    if st.button("➡️ Next: Prose Mode", help="Move to Prose mode to transform assertions into fluent text"):
+        st.session_state.current_mode = "Prose"
+        st.rerun()
 
 def prose_tab():
     """Prose mode - Transform assertions into fluent text."""
+    # Add green styling for Prose mode
+    st.markdown("""
+    <style>
+    .prose-mode {
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="prose-mode">', unsafe_allow_html=True)
     st.header("📖 Prose Mode")
     st.markdown("Transform your refined assertions into fluent, reader-friendly text.")
     
     st.info("🚧 Prose mode is coming soon! This will transform your assertions into well-structured prose.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def main():
     """Main Streamlit application."""
@@ -396,8 +429,14 @@ def main():
         current_mode = st.selectbox(
             "Select Mode",
             ["Idea Capture", "Structure", "Review", "Prose"],
-            index=0
+            index=["Idea Capture", "Structure", "Review", "Prose"].index(st.session_state.get("current_mode", "Idea Capture")),
+            help="Click to select mode"
         )
+        
+        # Update session state when mode changes
+        if current_mode != st.session_state.get("current_mode", "Idea Capture"):
+            st.session_state.current_mode = current_mode
+            st.rerun()
         
         st.markdown("---")
         
@@ -428,6 +467,7 @@ def main():
         """)
     
     # Main content area
+    current_mode = st.session_state.get("current_mode", "Idea Capture")
     if current_mode == "Idea Capture":
         idea_capture_tab()
     elif current_mode == "Structure":
