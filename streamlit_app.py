@@ -187,16 +187,186 @@ def idea_capture_tab():
                     st.warning("No assertions to export")
 
 def structure_tab():
-    """Structure mode - Edit and rearrange assertions."""
+    """Structure mode - Edit and rearrange assertions with relationship analysis."""
     st.header("🏗️ Structure Mode")
     st.markdown("Edit and rearrange your assertions. AI will help identify relationships between them.")
     
-    st.info("🚧 Structure mode is coming soon! This will allow you to edit and rearrange assertions with AI-powered relationship analysis.")
+    if not st.session_state.assertions:
+        st.info("No assertions available. Go to Idea Capture mode first to extract some assertions.")
+        return
     
-    if st.session_state.assertions:
-        st.subheader("Current Assertions")
-        for i, assertion in enumerate(st.session_state.assertions, 1):
-            st.write(f"{i}. {assertion.content}")
+    # Initialize structure analysis if not done yet
+    if "structure_analysis_done" not in st.session_state:
+        st.session_state.structure_analysis_done = False
+    
+    if "relationships" not in st.session_state:
+        st.session_state.relationships = []
+    
+    if "grouped_assertions" not in st.session_state:
+        st.session_state.grouped_assertions = {}
+    
+    # Run structure analysis if not done yet
+    if not st.session_state.structure_analysis_done:
+        with st.spinner("Analyzing relationships between assertions..."):
+            try:
+                # Ensure ClarusApp has the current assertions from session state
+                st.session_state.clarus_app.current_assertions = st.session_state.assertions
+                
+                result = st.session_state.clarus_app.start_structure_analysis()
+                
+                if "final_relationships" in result:
+                    st.session_state.relationships = result["final_relationships"]
+                    st.session_state.structure_analysis_done = True
+                    st.success(f"✅ Relationship analysis complete! Found {len(result['final_relationships'])} relationships.")
+                else:
+                    st.warning("No relationships found between assertions.")
+            except Exception as e:
+                st.error(f"Error running structure analysis: {e}")
+                return
+    
+    # Create two columns: relationships on left, grouped assertions on right
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("🔗 Relationships Found")
+        
+        if st.session_state.relationships:
+            # Group relationships by type
+            relationships_by_type = {}
+            for rel in st.session_state.relationships:
+                if rel.relationship_type not in relationships_by_type:
+                    relationships_by_type[rel.relationship_type] = []
+                relationships_by_type[rel.relationship_type].append(rel)
+            
+            for rel_type, relationships in relationships_by_type.items():
+                with st.expander(f"{rel_type.title()} Relationships ({len(relationships)})", expanded=True):
+                    for i, rel in enumerate(relationships, 1):
+                        # Find assertion contents
+                        assertion1 = next((a for a in st.session_state.assertions if a.id == rel.assertion1_id), None)
+                        assertion2 = next((a for a in st.session_state.assertions if a.id == rel.assertion2_id), None)
+                        
+                        if assertion1 and assertion2:
+                            st.write(f"**{i}.** {assertion1.content[:50]}{'...' if len(assertion1.content) > 50 else ''}")
+                            st.write(f"    → **{rel_type.upper()}** → {assertion2.content[:50]}{'...' if len(assertion2.content) > 50 else ''}")
+                            st.write(f"    *{rel.explanation}*")
+                            
+                            # Action buttons for each relationship
+                            col_edit, col_delete = st.columns(2)
+                            with col_edit:
+                                if st.button("✏️", key=f"edit_rel_{i}_{rel_type}", help="Edit relationship"):
+                                    st.session_state[f"editing_relationship_{i}_{rel_type}"] = True
+                            
+                            with col_delete:
+                                if st.button("🗑️", key=f"delete_rel_{i}_{rel_type}", help="Delete relationship"):
+                                    st.session_state.relationships.remove(rel)
+                                    st.rerun()
+                            
+                            st.markdown("---")
+        else:
+            st.info("No relationships found between assertions.")
+    
+    with col2:
+        st.subheader("📋 Grouped Assertions")
+        
+        # Group assertions by relationships
+        if st.session_state.relationships:
+            # Create groups based on relationships
+            groups = create_assertion_groups(st.session_state.assertions, st.session_state.relationships)
+            
+            for group_id, group_assertions in groups.items():
+                with st.expander(f"Group {group_id} ({len(group_assertions)} assertions)", expanded=True):
+                    for i, assertion in enumerate(group_assertions, 1):
+                        st.write(f"**{i}.** {assertion.content}")
+                        
+                        # Action buttons for each assertion in group
+                        col_edit, col_move = st.columns(2)
+                        with col_edit:
+                            if st.button("✏️", key=f"edit_group_{group_id}_{i}", help="Edit assertion"):
+                                st.session_state[f"editing_group_assertion_{group_id}_{i}"] = True
+                        
+                        with col_move:
+                            if st.button("↔️", key=f"move_group_{group_id}_{i}", help="Move to different group"):
+                                st.session_state[f"moving_assertion_{group_id}_{i}"] = True
+        else:
+            # If no relationships, show all assertions in one group
+            st.write("**All Assertions (No relationships found):**")
+            for i, assertion in enumerate(st.session_state.assertions, 1):
+                st.write(f"{i}. {assertion.content}")
+    
+    # Action buttons at the bottom
+    st.markdown("---")
+    col_rerun, col_export, col_reset = st.columns(3)
+    
+    with col_rerun:
+        if st.button("🔄 Re-analyze Relationships", help="Run structure analysis again"):
+            # Ensure ClarusApp has the current assertions from session state
+            st.session_state.clarus_app.current_assertions = st.session_state.assertions
+            st.session_state.structure_analysis_done = False
+            st.session_state.relationships = []
+            st.rerun()
+    
+    with col_export:
+        if st.button("📤 Export Structure", help="Export relationships as JSON"):
+            if st.session_state.relationships:
+                relationships_data = [rel.model_dump() for rel in st.session_state.relationships]
+                st.download_button(
+                    label="Download Relationships",
+                    data=json.dumps(relationships_data, indent=2),
+                    file_name="relationships.json",
+                    mime="application/json"
+                )
+            else:
+                st.warning("No relationships to export")
+    
+    with col_reset:
+        if st.button("🗑️ Reset Structure", help="Clear all relationships"):
+            st.session_state.relationships = []
+            st.session_state.structure_analysis_done = False
+            st.rerun()
+
+
+def create_assertion_groups(assertions, relationships):
+    """Create groups of assertions based on their relationships."""
+    from collections import defaultdict
+    
+    # Create a graph of connected assertions
+    graph = defaultdict(set)
+    assertion_ids = {a.id for a in assertions}
+    
+    for rel in relationships:
+        if rel.assertion1_id in assertion_ids and rel.assertion2_id in assertion_ids:
+            graph[rel.assertion1_id].add(rel.assertion2_id)
+            graph[rel.assertion2_id].add(rel.assertion1_id)
+    
+    # Find connected components (groups)
+    visited = set()
+    groups = {}
+    group_id = 1
+    
+    for assertion in assertions:
+        if assertion.id not in visited:
+            # Start a new group
+            group_assertions = []
+            stack = [assertion.id]
+            
+            while stack:
+                current_id = stack.pop()
+                if current_id not in visited:
+                    visited.add(current_id)
+                    current_assertion = next((a for a in assertions if a.id == current_id), None)
+                    if current_assertion:
+                        group_assertions.append(current_assertion)
+                    
+                    # Add connected assertions to stack
+                    for connected_id in graph[current_id]:
+                        if connected_id not in visited:
+                            stack.append(connected_id)
+            
+            if group_assertions:
+                groups[group_id] = group_assertions
+                group_id += 1
+    
+    return groups
 
 def review_tab():
     """Review mode - Flag potential issues."""
