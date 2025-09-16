@@ -15,7 +15,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 import json
 
-from models import Assertion, IdeaCaptureState
+from models import Assertion, IdeaCaptureState, ChangeRecord, ChangeHistory
 
 
 class IdeaCaptureWorkflow:
@@ -146,10 +146,23 @@ If the input contains no extractable assertions (only instructions/questions), r
             
             # Add to existing assertions
             all_assertions = state.assertions + new_assertions
+            updated_change_history = state.change_history
             
             if len(new_assertions) > 0:
+                # Track each new assertion in change history
+                for new_assertion in new_assertions:
+                    change_record = ChangeRecord(
+                        change_id=f"extract_{len(updated_change_history.changes) + 1}",
+                        change_type="add",
+                        assertion=new_assertion,
+                        user_request=input_text,
+                        description=f"Extracted assertion: {new_assertion.content[:50]}..."
+                    )
+                    updated_change_history.add_change(change_record)
+                
                 return {
                     "assertions": all_assertions,
+                    "change_history": updated_change_history,
                     "messages": state.messages + [
                         AIMessage(content=f"I've extracted {len(new_assertions)} new assertions from your input.")
                     ]
@@ -247,7 +260,8 @@ Analyze the user's intent and determine:
    - If they specify content/keywords: use "remove_content" with keywords or phrases to match
 3. Do they want to add new assertions? (return "add" and provide the new assertions) - Look for: "add", "no add", "also", "and", "plus", or when they provide new content
 4. Do they want to modify existing assertions? (return "modify" and provide changes)
-5. Do they want to continue the conversation? (return "continue")
+5. Do they want to revert/undo changes? (return "revert") - Look for: "revert", "undo", "bring back", "add back", "restore", "put back"
+6. Do they want to continue the conversation? (return "continue")
 
 EXAMPLES:
 - "no add this assertion" → intent: "add", new_assertions: ["this assertion"]
@@ -256,18 +270,22 @@ EXAMPLES:
 - "remove assertions about machine learning" → intent: "remove", remove_content: ["machine learning"]
 - "remove the one about AI bias" → intent: "remove", remove_content: ["AI bias", "bias"]
 - "add nuclear power debate" → intent: "add", new_assertions: ["nuclear power debate"]
+- "add the machine learning assertion back" → intent: "revert", revert_type: "restore_removed", revert_content: ["machine learning"]
+- "undo the last change" → intent: "revert", revert_type: "undo_last"
 - "that's good" → intent: "accept"
 
 IMPORTANT: Return ONLY a valid JSON object. Do not include any other text.
 
 Return your analysis as JSON:
 {{
-    "intent": "accept|remove|add|modify|continue",
+    "intent": "accept|remove|add|modify|revert|continue",
     "action": "description of what to do",
     "new_assertions": ["list of new assertions if adding"],
     "remove_indices": [list of 1-based indices to remove if removing by index],
     "remove_content": ["list of keywords/phrases to match for content-based removal"],
-    "modifications": {{"index": "new_content"}} if modifying
+    "modifications": {{"index": "new_content"}} if modifying,
+    "revert_type": "undo_last|restore_removed" if reverting,
+    "revert_content": ["keywords to match for restoring removed assertions"] if reverting
 }}"""),
             ("human", "Analyze this user feedback: {user_feedback}")
         ])
@@ -349,10 +367,24 @@ Return your analysis as JSON:
                             ]
                         }
                     
-                    # Get the content of removed assertions for the message
+                    # Get the content of removed assertions for the message and track changes
                     removed_assertions = []
+                    updated_change_history = state.change_history
+                    
                     for idx in sorted(valid_remove_indices):
-                        removed_assertions.append(state.assertions[idx].content)
+                        removed_assertion = state.assertions[idx]
+                        removed_assertions.append(removed_assertion.content)
+                        
+                        # Create change record for history
+                        change_record = ChangeRecord(
+                            change_id=f"remove_{len(updated_change_history.changes) + 1}",
+                            change_type="remove",
+                            assertion=removed_assertion,
+                            assertion_index=idx,
+                            user_request=user_input,
+                            description=f"Removed assertion: {removed_assertion.content[:50]}..."
+                        )
+                        updated_change_history.add_change(change_record)
                     
                     # Create simplified removal message
                     removal_message = f"Removed {removed_count} assertion(s):\n"
@@ -362,6 +394,7 @@ Return your analysis as JSON:
                     
                     return {
                         "assertions": updated_assertions,
+                        "change_history": updated_change_history,
                         "messages": state.messages + [
                             AIMessage(content=removal_message)
                         ]
@@ -388,9 +421,22 @@ Return your analysis as JSON:
                         ))
                     
                     updated_assertions = state.assertions + new_assertions
+                    updated_change_history = state.change_history
+                    
+                    # Track each new assertion in change history
+                    for new_assertion in new_assertions:
+                        change_record = ChangeRecord(
+                            change_id=f"add_{len(updated_change_history.changes) + 1}",
+                            change_type="add",
+                            assertion=new_assertion,
+                            user_request=user_input,
+                            description=f"Added assertion: {new_assertion.content[:50]}..."
+                        )
+                        updated_change_history.add_change(change_record)
                     
                     return {
                         "assertions": updated_assertions,
+                        "change_history": updated_change_history,
                         "messages": state.messages + [
                             AIMessage(content=f"I've added {len(new_assertions)} new assertions. You now have {len(updated_assertions)} total assertions.")
                         ]
@@ -400,21 +446,144 @@ Return your analysis as JSON:
                 # Modify existing assertions
                 modifications = intent_data.get("modifications", {})
                 updated_assertions = state.assertions.copy()
+                updated_change_history = state.change_history
                 
                 for index_str, new_content in modifications.items():
                     try:
                         index = int(index_str) - 1  # Convert to 0-based index
                         if 0 <= index < len(updated_assertions):
+                            original_assertion = updated_assertions[index]
                             updated_assertions[index].content = new_content
+                            
+                            # Track the modification in change history
+                            change_record = ChangeRecord(
+                                change_id=f"modify_{len(updated_change_history.changes) + 1}",
+                                change_type="modify",
+                                assertion=updated_assertions[index],
+                                original_assertion=original_assertion,
+                                assertion_index=index,
+                                user_request=user_input,
+                                description=f"Modified assertion {index + 1}: {new_content[:50]}..."
+                            )
+                            updated_change_history.add_change(change_record)
                     except (ValueError, IndexError):
                         continue
                 
                 return {
                     "assertions": updated_assertions,
+                    "change_history": updated_change_history,
                     "messages": state.messages + [
                         AIMessage(content=f"I've updated the assertions as requested. You now have {len(updated_assertions)} assertions.")
                     ]
                 }
+            
+            elif intent == "revert":
+                # Handle revert operations
+                revert_type = intent_data.get("revert_type", "undo_last")
+                revert_content = intent_data.get("revert_content", [])
+                
+                if revert_type == "undo_last":
+                    # Undo the last change
+                    last_change = state.change_history.get_last_change()
+                    if not last_change:
+                        return {
+                            "messages": state.messages + [
+                                AIMessage(content="No changes to undo.")
+                            ]
+                        }
+                    
+                    # Revert based on the last change type
+                    if last_change.change_type == "remove" and last_change.assertion:
+                        # Restore the removed assertion
+                        updated_assertions = state.assertions.copy()
+                        if last_change.assertion_index is not None:
+                            # Insert at original position
+                            updated_assertions.insert(last_change.assertion_index, last_change.assertion)
+                        else:
+                            # Add to end
+                            updated_assertions.append(last_change.assertion)
+                        
+                        # Remove the change from history
+                        state.change_history.changes.pop()
+                        state.change_history.current_version -= 1
+                        
+                        return {
+                            "assertions": updated_assertions,
+                            "change_history": state.change_history,
+                            "messages": state.messages + [
+                                AIMessage(content=f"Restored the removed assertion: {last_change.assertion.content}")
+                            ]
+                        }
+                    
+                    elif last_change.change_type == "add" and last_change.assertion:
+                        # Remove the added assertion
+                        updated_assertions = [a for a in state.assertions if a.id != last_change.assertion.id]
+                        
+                        # Remove the change from history
+                        state.change_history.changes.pop()
+                        state.change_history.current_version -= 1
+                        
+                        return {
+                            "assertions": updated_assertions,
+                            "change_history": state.change_history,
+                            "messages": state.messages + [
+                                AIMessage(content=f"Removed the added assertion: {last_change.assertion.content}")
+                            ]
+                        }
+                    
+                    elif last_change.change_type == "modify" and last_change.original_assertion:
+                        # Restore the original assertion
+                        updated_assertions = state.assertions.copy()
+                        for i, assertion in enumerate(updated_assertions):
+                            if assertion.id == last_change.assertion.id:
+                                updated_assertions[i] = last_change.original_assertion
+                                break
+                        
+                        # Remove the change from history
+                        state.change_history.changes.pop()
+                        state.change_history.current_version -= 1
+                        
+                        return {
+                            "assertions": updated_assertions,
+                            "change_history": state.change_history,
+                            "messages": state.messages + [
+                                AIMessage(content=f"Restored the original assertion: {last_change.original_assertion.content}")
+                            ]
+                        }
+                
+                elif revert_type == "restore_removed" and revert_content:
+                    # Restore a specific removed assertion based on content
+                    restored_assertion = None
+                    for change in reversed(state.change_history.changes):
+                        if (change.change_type == "remove" and 
+                            change.assertion and 
+                            any(keyword.lower() in change.assertion.content.lower() for keyword in revert_content)):
+                            restored_assertion = change.assertion
+                            break
+                    
+                    if restored_assertion:
+                        updated_assertions = state.assertions.copy()
+                        updated_assertions.append(restored_assertion)
+                        
+                        return {
+                            "assertions": updated_assertions,
+                            "messages": state.messages + [
+                                AIMessage(content=f"Restored the removed assertion: {restored_assertion.content}")
+                            ]
+                        }
+                    else:
+                        return {
+                            "messages": state.messages + [
+                                AIMessage(content="I couldn't find a removed assertion matching that description.")
+                            ]
+                        }
+                
+                else:
+                    return {
+                        "messages": state.messages + [
+                            AIMessage(content="I'm not sure what you'd like me to revert. Please be more specific.")
+                        ]
+                    }
             
             else:  # continue or unknown intent
                 return {

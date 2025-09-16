@@ -8,7 +8,7 @@ structured document creation.
 
 from typing import List, Dict, Any, Optional
 import os
-from models import Assertion
+from models import Assertion, ChangeHistory
 from idea_capture import IdeaCaptureWorkflow
 from structure import StructureWorkflow
 
@@ -40,6 +40,7 @@ class ClarusApp:
         self.current_assertions: List[Assertion] = []
         self.current_mode: str = "idea_capture"  # or "structure"
         self.session_id: str = "default"
+        self.change_history: ChangeHistory = ChangeHistory()
     
     def start_idea_capture(self, initial_input: str, session_id: str = None) -> Dict[str, Any]:
         """
@@ -89,15 +90,18 @@ class ClarusApp:
         state = IdeaCaptureState(
             messages=current_messages,
             assertions=self.current_assertions,
-            current_input=user_input
+            current_input=user_input,
+            change_history=self.change_history
         )
         
         # Use the update_assertions_node to process the user input
         result = self.idea_capture_workflow._update_assertions_node(state)
         
-        # Update current assertions if they were modified
+        # Update current assertions and change history if they were modified
         if "assertions" in result:
             self.current_assertions = result["assertions"]
+        if "change_history" in result:
+            self.change_history = result["change_history"]
         
         # Add the AI response to messages
         if "messages" in result and result["messages"]:
@@ -135,14 +139,16 @@ class ClarusApp:
         state = IdeaCaptureState(
             messages=current_messages,
             assertions=self.current_assertions,
-            current_input=enhanced_input
+            current_input=enhanced_input,
+            change_history=self.change_history
         )
         
         # Create a fresh state for extraction (without existing assertions)
         fresh_state = IdeaCaptureState(
             messages=current_messages,
             assertions=[],  # Start with empty assertions
-            current_input=enhanced_input
+            current_input=enhanced_input,
+            change_history=self.change_history
         )
         
         # Always try to extract new assertions first
@@ -164,6 +170,8 @@ class ClarusApp:
             if new_assertions:
                 self.current_assertions.extend(new_assertions)
                 extraction_result["assertions"] = self.current_assertions
+                if "change_history" in extraction_result:
+                    self.change_history = extraction_result["change_history"]
                 return extraction_result
             else:
                 # No truly new assertions, treat as feedback/instructions
@@ -210,6 +218,7 @@ class ClarusApp:
         self.current_assertions = []
         self.current_mode = "idea_capture"
         self.session_id = "default"
+        self.change_history = ChangeHistory()
     
     def export_assertions(self) -> List[Dict[str, Any]]:
         """
