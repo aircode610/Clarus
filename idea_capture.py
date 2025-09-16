@@ -234,18 +234,23 @@ Current assertions:
 
 User feedback: {user_feedback}
 
-CRITICAL: When the user mentions removing, deleting, or getting rid of assertions, they want to REMOVE existing assertions, NOT add new ones.
+CRITICAL RULES:
+1. If the user says "add" or "no add" followed by content, they want to ADD new assertions
+2. Only remove assertions if the user explicitly says "remove", "delete", "get rid of", "don't want", "take out"
+3. Be conservative with removals - only remove if the intent is clearly to remove
 
 Analyze the user's intent and determine:
 1. Do they want to accept all assertions as-is? (return "accept") - Look for: "yes", "good", "perfect", "keep them", "accept", "fine", "ok", "sounds good", "looks good", "that works", "i'm satisfied"
-2. Do they want to remove specific assertions? (return "remove" and list which ones by index)
-3. Do they want to add new assertions? (return "add" and provide the new assertions)
+2. Do they want to remove specific assertions? (return "remove" and list which ones by index) - ONLY if they explicitly say to remove/delete
+3. Do they want to add new assertions? (return "add" and provide the new assertions) - Look for: "add", "no add", "also", "and", "plus", or when they provide new content
 4. Do they want to modify existing assertions? (return "modify" and provide changes)
 5. Do they want to continue the conversation? (return "continue")
 
-For removal: Look for keywords like "remove", "delete", "get rid of", "don't want", "take out", etc.
-For removal: Match assertions by content similarity, not by exact text match.
-For removal: Return the INDEX (1-based) of assertions to remove.
+EXAMPLES:
+- "no add this assertion" → intent: "add", new_assertions: ["this assertion"]
+- "remove the first one" → intent: "remove", remove_indices: [1]
+- "add nuclear power debate" → intent: "add", new_assertions: ["nuclear power debate"]
+- "that's good" → intent: "accept"
 
 IMPORTANT: Return ONLY a valid JSON object. Do not include any other text.
 
@@ -317,6 +322,14 @@ Return your analysis as JSON:
                 
                 removed_count = len(valid_remove_indices)
                 if removed_count > 0:
+                    # Safety check: Don't remove all assertions unless explicitly requested
+                    if len(updated_assertions) == 0 and len(state.assertions) > 1:
+                        return {
+                            "messages": state.messages + [
+                                AIMessage(content="I'm not sure you want to remove all assertions. Please be more specific about which assertions to remove, or say 'remove all' if you really want to clear everything.")
+                            ]
+                        }
+                    
                     return {
                         "assertions": updated_assertions,
                         "messages": state.messages + [

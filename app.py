@@ -78,32 +78,99 @@ class ClarusApp:
         if self.current_mode != "idea_capture":
             raise ValueError("Not currently in idea capture mode")
         
-        # Create a new state with the user input
+        # For continuing conversations, we'll use the update_assertions_node directly
+        # since we want to process the user input as feedback/instructions
         from models import IdeaCaptureState
-        from langchain_core.messages import HumanMessage
+        from langchain_core.messages import HumanMessage, AIMessage
         
-        # Get the current state from the workflow
-        config = {"configurable": {"thread_id": self.session_id}}
-        current_state = self.idea_capture_workflow.graph.get_state(config)
+        # Create a state with existing assertions and the new user input
+        current_messages = [HumanMessage(content=user_input)]
         
-        # Add the new user message
-        new_messages = current_state.values.get("messages", []) + [HumanMessage(content=user_input)]
-        
-        # Create new state
-        new_state = IdeaCaptureState(
-            messages=new_messages,
+        state = IdeaCaptureState(
+            messages=current_messages,
             assertions=self.current_assertions,
             current_input=user_input
         )
         
-        # Continue the workflow
-        result = self.idea_capture_workflow.graph.invoke(new_state, config)
+        # Use the update_assertions_node to process the user input
+        result = self.idea_capture_workflow._update_assertions_node(state)
         
-        # Update current assertions
+        # Update current assertions if they were modified
         if "assertions" in result:
             self.current_assertions = result["assertions"]
         
+        # Add the AI response to messages
+        if "messages" in result and result["messages"]:
+            # Get the last AI message
+            for msg in reversed(result["messages"]):
+                if hasattr(msg, 'content') and msg.__class__.__name__ == 'AIMessage':
+                    result["ai_response"] = msg.content
+                    break
+        
         return result
+    
+    def process_mixed_input(self, user_input: str, deleted_assertions: List[str] = None) -> Dict[str, Any]:
+        """
+        Process user input that might contain both new ideas and feedback.
+        Always tries to extract new assertions first, then processes as feedback if needed.
+        
+        Args:
+            user_input: User input that might be new ideas or feedback
+            deleted_assertions: List of deleted assertion contents for LLM context
+            
+        Returns:
+            Dictionary containing the workflow result
+        """
+        from models import IdeaCaptureState
+        from langchain_core.messages import HumanMessage
+        
+        # Create enhanced input with context about deleted assertions
+        enhanced_input = user_input
+        if deleted_assertions:
+            enhanced_input += f"\n\nNote: The following assertions were previously deleted and should not be re-extracted: {', '.join(deleted_assertions)}"
+        
+        # Create a state with existing assertions and the new user input
+        current_messages = [HumanMessage(content=enhanced_input)]
+        
+        state = IdeaCaptureState(
+            messages=current_messages,
+            assertions=self.current_assertions,
+            current_input=enhanced_input
+        )
+        
+        # Create a fresh state for extraction (without existing assertions)
+        fresh_state = IdeaCaptureState(
+            messages=current_messages,
+            assertions=[],  # Start with empty assertions
+            current_input=enhanced_input
+        )
+        
+        # Always try to extract new assertions first
+        extraction_result = self.idea_capture_workflow._extract_assertions_node(fresh_state)
+        
+        # Check if new assertions were extracted
+        if "assertions" in extraction_result and extraction_result["assertions"]:
+            # New assertions were found, filter out deleted ones and add to existing
+            new_assertions = extraction_result["assertions"]
+            # Filter out any assertions that match deleted ones
+            if deleted_assertions:
+                new_assertions = [a for a in new_assertions if a.content not in deleted_assertions]
+            
+            # Filter out any assertions that already exist
+            existing_contents = [a.content for a in self.current_assertions]
+            new_assertions = [a for a in new_assertions if a.content not in existing_contents]
+            
+            # Add new assertions to existing ones
+            if new_assertions:
+                self.current_assertions.extend(new_assertions)
+                extraction_result["assertions"] = self.current_assertions
+                return extraction_result
+            else:
+                # No truly new assertions, treat as feedback/instructions
+                return self.continue_idea_capture(user_input)
+        else:
+            # No new assertions, treat as feedback/instructions
+            return self.continue_idea_capture(user_input)
     
     def start_structure_analysis(self, assertions: List[Assertion] = None, session_id: str = None) -> Dict[str, Any]:
         """

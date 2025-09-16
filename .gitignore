@@ -165,7 +165,6 @@ datasets/
 *.pickle
 
 # Model files
-models/
 *.model
 *.pkl
 *.joblib
