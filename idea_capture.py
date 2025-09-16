@@ -55,6 +55,7 @@ class IdeaCaptureWorkflow:
         builder.add_node("extract_assertions", self._extract_assertions_node)
         builder.add_node("present_assertions", self._present_assertions_node)
         builder.add_node("user_confirmation", self._user_confirmation_node)
+        builder.add_node("route_decision", self._route_decision_node)
         builder.add_node("update_assertions", self._update_assertions_node)
         builder.add_node("summarize_chat", self._summarize_chat_node)
         
@@ -62,11 +63,12 @@ class IdeaCaptureWorkflow:
         builder.add_edge(START, "extract_assertions")
         builder.add_edge("extract_assertions", "present_assertions")
         builder.add_edge("present_assertions", "user_confirmation")
+        builder.add_edge("user_confirmation", "route_decision")
         builder.add_conditional_edges(
-            "user_confirmation",
-            self._should_continue,
+            "route_decision",
+            self._route_after_confirmation,
             {
-                "continue": "update_assertions",
+                "update": "update_assertions",
                 "end": "summarize_chat"
             }
         )
@@ -223,8 +225,13 @@ If the input contains no extractable assertions (only instructions/questions), r
                 "messages": state.messages + [HumanMessage(content=user_response.get("response", ""))],
                 "current_input": user_response.get("response", "")
             },
-            goto="update_assertions"
+            goto="route_decision"
         )
+    
+    def _route_decision_node(self, state: IdeaCaptureState) -> Dict[str, Any]:
+        """Route decision node - just passes through the state."""
+        # This node doesn't modify state, just serves as a routing point
+        return {}
     
     def _update_assertions_node(self, state: IdeaCaptureState) -> Dict[str, Any]:
         """Update assertions based on user feedback using LLM to understand intent."""
@@ -232,6 +239,7 @@ If the input contains no extractable assertions (only instructions/questions), r
         
         if not user_input:
             return {}
+        
         
         # First, let the LLM understand what the user wants to do
         intent_prompt = ChatPromptTemplate.from_messages([
@@ -245,7 +253,7 @@ User feedback: {user_feedback}
 CRITICAL: When the user mentions removing, deleting, or getting rid of assertions, they want to REMOVE existing assertions, NOT add new ones.
 
 Analyze the user's intent and determine:
-1. Do they want to accept all assertions as-is? (return "accept")
+1. Do they want to accept all assertions as-is? (return "accept") - Look for: "yes", "good", "perfect", "keep them", "accept", "fine", "ok", "sounds good", "looks good", "that works", "i'm satisfied"
 2. Do they want to remove specific assertions? (return "remove" and list which ones by index)
 3. Do they want to add new assertions? (return "add" and provide the new assertions)
 4. Do they want to modify existing assertions? (return "modify" and provide changes)
@@ -296,7 +304,7 @@ Return your analysis as JSON:
             if intent == "accept":
                 return {
                     "messages": state.messages + [
-                        AIMessage(content="Great! I'll keep all the assertions as they are. Let me know if you want to add anything else or if you're ready to finish.")
+                        AIMessage(content="Perfect! I'll keep all the assertions as they are. The session is now complete with your final set of assertions.")
                     ]
                 }
             
@@ -415,28 +423,51 @@ Return your analysis as JSON:
         chain = prompt | self.llm
         response = chain.invoke({"conversation": conversation_text})
         
+        # Format final assertions list
+        final_assertions_text = ""
+        if state.assertions:
+            final_assertions_text = "\n\nFinal Assertions:\n" + "\n".join([
+                f"{i+1}. {assertion.content} (confidence: {assertion.confidence:.2f})"
+                for i, assertion in enumerate(state.assertions)
+            ])
+        
+        # Create final message with summary and assertions
+        final_message = f"Session complete!\n\nSummary: {response.content}{final_assertions_text}"
+        
         return {
             "chat_summary": response.content,
             "messages": state.messages + [
-                AIMessage(content=f"Session complete! Summary: {response.content}")
+                AIMessage(content=final_message)
             ]
         }
     
-    def _should_continue(self, state: IdeaCaptureState) -> Literal["continue", "end"]:
-        """Determine if the workflow should continue or end."""
+    def _route_after_confirmation(self, state: IdeaCaptureState) -> Literal["update", "end"]:
+        """Route after user confirmation - either update assertions or end session."""
         # Check if user wants to end the session
         if state.messages and isinstance(state.messages[-1], HumanMessage):
             last_message = state.messages[-1].content.lower()
-            if any(word in last_message for word in ["done", "finish", "complete", "end", "that's all", "good", "perfect", "thanks"]):
+            # Expanded list of completion indicators
+            completion_words = [
+                "done", "finish", "complete", "end", "that's all", "good", "perfect", "thanks", 
+                "looks good", "that's perfect", "i'm done", "all set", "sounds good", "great",
+                "yes", "yep", "ok", "okay", "sure", "fine", "acceptable", "good to go",
+                "no more", "nothing else", "that's it", "i'm satisfied", "i'm happy",
+                "accept", "keep them", "leave them", "don't change", "no changes", 
+                "they're fine", "that works", "i'll keep them"
+            ]
+            if any(word in last_message for word in completion_words):
                 return "end"
         
         # Check if the last AI message suggests ending
         if state.messages and isinstance(state.messages[-1], AIMessage):
             last_ai_message = state.messages[-1].content.lower()
-            if "ready to finish" in last_ai_message and len(state.messages) > 2:
+            if any(phrase in last_ai_message for phrase in [
+                "ready to finish", "satisfied with", "looks good", "perfect", "all set"
+            ]) and len(state.messages) > 2:
                 return "end"
         
-        return "continue"
+        # Default to update if user wants changes
+        return "update"
     
     def run(self, initial_input: str, thread_id: str = "default") -> Dict[str, Any]:
         """Run the idea capture workflow."""
@@ -482,6 +513,7 @@ def create_idea_capture_graph(config: dict = None):
     builder.add_node("extract_assertions", workflow._extract_assertions_node)
     builder.add_node("present_assertions", workflow._present_assertions_node)
     builder.add_node("user_confirmation", workflow._user_confirmation_node)
+    builder.add_node("route_decision", workflow._route_decision_node)
     builder.add_node("update_assertions", workflow._update_assertions_node)
     builder.add_node("summarize_chat", workflow._summarize_chat_node)
     
@@ -489,11 +521,12 @@ def create_idea_capture_graph(config: dict = None):
     builder.add_edge(START, "extract_assertions")
     builder.add_edge("extract_assertions", "present_assertions")
     builder.add_edge("present_assertions", "user_confirmation")
+    builder.add_edge("user_confirmation", "route_decision")
     builder.add_conditional_edges(
-        "user_confirmation",
-        workflow._should_continue,
+        "route_decision",
+        workflow._route_after_confirmation,
         {
-            "continue": "update_assertions",
+            "update": "update_assertions",
             "end": "summarize_chat"
         }
     )
