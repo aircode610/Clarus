@@ -139,6 +139,7 @@ cython_debug/
 
 # LangGraph specific
 .langgraph/
+.langgraph_api/
 langgraph_cache/
 *.langgraph
 
