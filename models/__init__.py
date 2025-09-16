@@ -6,11 +6,13 @@ the modular clarus package and the standalone workflow files for LangGraph Studi
 """
 
 from .assertions import Assertion, Relationship
-from .states import IdeaCaptureState, StructureState
+from .states import IdeaCaptureState, StructureState, ChangeRecord, ChangeHistory
 
 __all__ = [
     "Assertion",
     "Relationship", 
     "IdeaCaptureState",
-    "StructureState"
+    "StructureState",
+    "ChangeRecord",
+    "ChangeHistory"
 ]
