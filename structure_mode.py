@@ -1,0 +1,571 @@
+"""
+Structure Mode Workflow using LangGraph
+
+This module implements the second mode of the Clarus project - Structure.
+Takes assertions from Idea Capture mode and analyzes relationships between them
+using Rhetorical Structure Theory (RST) relationships.
+"""
+
+from typing import List, Dict, Any, Literal, Annotated, Optional
+from langgraph.graph import StateGraph, START, END
+from langgraph.graph.message import add_messages
+from langgraph.checkpoint.memory import MemorySaver
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel, Field
+import json
+from idea_capture import Assertion
+
+
+class Relationship(BaseModel):
+    """Represents a relationship between two assertions."""
+    assertion1_id: str = Field(description="ID of the first assertion")
+    assertion2_id: str = Field(description="ID of the second assertion")
+    relationship_type: Literal["evidence", "background", "cause", "contrast", "condition"] = Field(
+        description="Type of relationship between the assertions"
+    )
+    confidence: float = Field(description="Confidence score (0-1) for this relationship")
+    explanation: str = Field(description="Brief explanation of why this relationship exists")
+
+
+class StructureState(BaseModel):
+    """State for the Structure workflow."""
+    messages: Annotated[List[BaseMessage], add_messages] = Field(default_factory=list)
+    assertions: List[Assertion] = Field(default_factory=list)
+    evidence_relationships: List[Relationship] = Field(default_factory=list)
+    background_relationships: List[Relationship] = Field(default_factory=list)
+    cause_relationships: List[Relationship] = Field(default_factory=list)
+    contrast_relationships: List[Relationship] = Field(default_factory=list)
+    condition_relationships: List[Relationship] = Field(default_factory=list)
+    final_relationships: List[Relationship] = Field(default_factory=list)
+    current_input: str = Field(default="")
+    chat_summary: str = Field(default="")
+
+
+class StructureWorkflow:
+    """Main workflow class for Structure mode."""
+    
+    def __init__(self, model_name: str = "gpt-4o-mini", config: dict = None):
+        # Handle both direct instantiation and LangGraph Studio config
+        if config is not None and isinstance(config, dict):
+            # Extract model name from config if available
+            model_name = config.get("model_name", "gpt-4o-mini")
+        
+        self.llm = ChatOpenAI(model=model_name, temperature=0.3)
+        self.memory = MemorySaver()
+        self.graph = self._build_graph()
+    
+    def _build_graph(self) -> StateGraph:
+        """Build the LangGraph workflow with parallel relationship analysis."""
+        builder = StateGraph(StructureState)
+        
+        # Add nodes
+        builder.add_node("analyze_evidence", self._analyze_evidence_node)
+        builder.add_node("analyze_background", self._analyze_background_node)
+        builder.add_node("analyze_cause", self._analyze_cause_node)
+        builder.add_node("analyze_contrast", self._analyze_contrast_node)
+        builder.add_node("analyze_condition", self._analyze_condition_node)
+        builder.add_node("merge_relationships", self._merge_relationships_node)
+        builder.add_node("present_structure", self._present_structure_node)
+        builder.add_node("summarize_structure", self._summarize_structure_node)
+        
+        # Add edges - all relationship analysis nodes run in parallel
+        builder.add_edge(START, "analyze_evidence")
+        builder.add_edge(START, "analyze_background")
+        builder.add_edge(START, "analyze_cause")
+        builder.add_edge(START, "analyze_contrast")
+        builder.add_edge(START, "analyze_condition")
+        
+        # All parallel nodes feed into merge
+        builder.add_edge("analyze_evidence", "merge_relationships")
+        builder.add_edge("analyze_background", "merge_relationships")
+        builder.add_edge("analyze_cause", "merge_relationships")
+        builder.add_edge("analyze_contrast", "merge_relationships")
+        builder.add_edge("analyze_condition", "merge_relationships")
+        
+        # Merge feeds into presentation
+        builder.add_edge("merge_relationships", "present_structure")
+        builder.add_edge("present_structure", "summarize_structure")
+        builder.add_edge("summarize_structure", END)
+        
+        return builder.compile(checkpointer=self.memory)
+    
+    def _create_relationship_prompt(self, relationship_type: str) -> ChatPromptTemplate:
+        """Create a prompt template for analyzing a specific relationship type."""
+        
+        relationship_descriptions = {
+            "evidence": {
+                "description": "Evidence relationships where one assertion provides evidence, examples, or support for another",
+                "examples": "A provides evidence for B, A is an example of B, A supports B's claim"
+            },
+            "background": {
+                "description": "Background relationships where one assertion provides context, setting, or background information for another",
+                "examples": "A provides background for B, A sets the context for B, A gives necessary information for understanding B"
+            },
+            "cause": {
+                "description": "Cause relationships where one assertion causes, leads to, or results in another",
+                "examples": "A causes B, A leads to B, A results in B, A is the reason for B"
+            },
+            "contrast": {
+                "description": "Contrast relationships where assertions present opposing, contradictory, or contrasting viewpoints",
+                "examples": "A contrasts with B, A contradicts B, A opposes B, A is different from B"
+            },
+            "condition": {
+                "description": "Condition relationships where one assertion is a prerequisite, condition, or requirement for another",
+                "examples": "A is a condition for B, A is required for B, A must happen before B, A enables B"
+            }
+        }
+        
+        rel_info = relationship_descriptions[relationship_type]
+        
+        return ChatPromptTemplate.from_messages([
+            ("system", f"""You are an expert at analyzing rhetorical relationships between assertions using Rhetorical Structure Theory.
+
+Your task is to find {relationship_type} relationships between the given assertions.
+
+{relationship_type.upper()} RELATIONSHIPS:
+{rel_info['description']}
+
+Examples: {rel_info['examples']}
+
+CRITICAL RULES:
+- Only identify relationships that clearly fit the {relationship_type} pattern
+- Be conservative - only include relationships you're confident about
+- Each relationship should be between exactly 2 assertions
+- Provide confidence scores (0-1) for each relationship
+- Include brief explanations for why the relationship exists
+
+IMPORTANT: Return ONLY a valid JSON array. Do not include any other text.
+
+Return your response as a JSON list of relationships. Each relationship should have:
+- assertion1_id: ID of the first assertion
+- assertion2_id: ID of the second assertion  
+- relationship_type: "{relationship_type}"
+- confidence: number between 0 and 1
+- explanation: brief explanation of the relationship
+
+If no {relationship_type} relationships are found, return an empty array: []"""),
+            ("human", "Analyze these assertions for {relationship_type} relationships:\n\n{assertions_text}")
+        ])
+    
+    def _analyze_evidence_node(self, state: StructureState) -> Dict[str, Any]:
+        """Analyze evidence relationships between assertions."""
+        return self._analyze_relationships(state, "evidence")
+    
+    def _analyze_background_node(self, state: StructureState) -> Dict[str, Any]:
+        """Analyze background relationships between assertions."""
+        return self._analyze_relationships(state, "background")
+    
+    def _analyze_cause_node(self, state: StructureState) -> Dict[str, Any]:
+        """Analyze cause relationships between assertions."""
+        return self._analyze_relationships(state, "cause")
+    
+    def _analyze_contrast_node(self, state: StructureState) -> Dict[str, Any]:
+        """Analyze contrast relationships between assertions."""
+        return self._analyze_relationships(state, "contrast")
+    
+    def _analyze_condition_node(self, state: StructureState) -> Dict[str, Any]:
+        """Analyze condition relationships between assertions."""
+        return self._analyze_relationships(state, "condition")
+    
+    def _analyze_relationships(self, state: StructureState, relationship_type: str) -> Dict[str, Any]:
+        """Generic method to analyze relationships of a specific type."""
+        if not state.assertions or len(state.assertions) < 2:
+            return {}
+        
+        # Format assertions for the prompt
+        assertions_text = "\n".join([
+            f"ID: {assertion.id}\nContent: {assertion.content}\n"
+            for assertion in state.assertions
+        ])
+        
+        # Create and run the prompt
+        prompt = self._create_relationship_prompt(relationship_type)
+        chain = prompt | self.llm
+        response = chain.invoke({
+            "assertions_text": assertions_text,
+            "relationship_type": relationship_type
+        })
+        
+        try:
+            # Clean the response content
+            content = response.content.strip()
+            
+            # Try to extract JSON from the response if it's wrapped in markdown
+            if content.startswith("```json"):
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif content.startswith("```"):
+                content = content.split("```")[1].split("```")[0].strip()
+            
+            # Parse JSON response
+            relationships_data = json.loads(content)
+            
+            # Ensure it's a list
+            if not isinstance(relationships_data, list):
+                relationships_data = [relationships_data]
+            
+            # Create relationship objects
+            relationships = []
+            for rel_data in relationships_data:
+                if not isinstance(rel_data, dict):
+                    continue
+                
+                # Ensure required fields exist
+                rel_data.setdefault("relationship_type", relationship_type)
+                rel_data.setdefault("confidence", 0.8)
+                rel_data.setdefault("explanation", f"{relationship_type} relationship")
+                
+                # Validate that both assertion IDs exist
+                assertion1_id = rel_data.get("assertion1_id")
+                assertion2_id = rel_data.get("assertion2_id")
+                
+                if (assertion1_id and assertion2_id and 
+                    assertion1_id != assertion2_id and
+                    any(a.id == assertion1_id for a in state.assertions) and
+                    any(a.id == assertion2_id for a in state.assertions)):
+                    
+                    relationships.append(Relationship(**rel_data))
+            
+            # Return the relationships for the specific type
+            field_name = f"{relationship_type}_relationships"
+            return {field_name: relationships}
+            
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            # Return empty relationships on error
+            field_name = f"{relationship_type}_relationships"
+            return {field_name: []}
+    
+    def _merge_relationships_node(self, state: StructureState) -> Dict[str, Any]:
+        """Merge all relationship types and resolve conflicts."""
+        # Collect all relationships
+        all_relationships = []
+        all_relationships.extend(state.evidence_relationships)
+        all_relationships.extend(state.background_relationships)
+        all_relationships.extend(state.cause_relationships)
+        all_relationships.extend(state.contrast_relationships)
+        all_relationships.extend(state.condition_relationships)
+        
+        if not all_relationships:
+            return {
+                "final_relationships": [],
+                "messages": state.messages + [
+                    AIMessage(content="I analyzed all the assertions but didn't find any clear relationships between them.")
+                ]
+            }
+        
+        # Find duplicate pairs (same assertion IDs but different relationship types)
+        relationship_pairs = {}
+        for rel in all_relationships:
+            # Create a consistent pair key (sorted IDs)
+            pair_key = tuple(sorted([rel.assertion1_id, rel.assertion2_id]))
+            
+            if pair_key not in relationship_pairs:
+                relationship_pairs[pair_key] = []
+            relationship_pairs[pair_key].append(rel)
+        
+        # Resolve conflicts for pairs with multiple relationship types
+        final_relationships = []
+        conflicts_to_resolve = []
+        
+        for pair_key, relationships in relationship_pairs.items():
+            if len(relationships) == 1:
+                # No conflict, add the relationship
+                final_relationships.append(relationships[0])
+            else:
+                # Multiple relationship types for the same pair - need to resolve
+                conflicts_to_resolve.append(relationships)
+        
+        # If there are conflicts, use LLM to resolve them
+        if conflicts_to_resolve:
+            resolved_relationships = self._resolve_relationship_conflicts(
+                conflicts_to_resolve, state.assertions
+            )
+            final_relationships.extend(resolved_relationships)
+        
+        return {
+            "final_relationships": final_relationships,
+            "messages": state.messages + [
+                AIMessage(content=f"I found {len(all_relationships)} potential relationships and resolved any conflicts. Final count: {len(final_relationships)} relationships.")
+            ]
+        }
+    
+    def _resolve_relationship_conflicts(self, conflicts: List[List[Relationship]], assertions: List[Assertion]) -> List[Relationship]:
+        """Use LLM to resolve conflicts when multiple relationship types exist for the same assertion pair."""
+        if not conflicts:
+            return []
+        
+        # Create assertions lookup
+        assertions_dict = {a.id: a for a in assertions}
+        
+        resolved_relationships = []
+        
+        for conflict_group in conflicts:
+            if not conflict_group:
+                continue
+            
+            # Get the assertion pair
+            rel = conflict_group[0]
+            assertion1 = assertions_dict.get(rel.assertion1_id)
+            assertion2 = assertions_dict.get(rel.assertion2_id)
+            
+            if not assertion1 or not assertion2:
+                continue
+            
+            # Create prompt for conflict resolution
+            conflict_prompt = ChatPromptTemplate.from_messages([
+                ("system", """You are an expert at analyzing rhetorical relationships between assertions.
+
+You need to choose the BEST relationship type for a pair of assertions that could have multiple relationship types.
+
+Given these assertions and the possible relationship types, choose the ONE relationship type that best describes their relationship.
+
+Consider:
+1. Which relationship is most fundamental/primary?
+2. Which relationship best captures the semantic connection?
+3. Which relationship would be most useful for structuring a document?
+
+IMPORTANT: Return ONLY a valid JSON object. Do not include any other text.
+
+Return your choice as JSON with these fields:
+- chosen_relationship: one of "evidence", "background", "cause", "contrast", or "condition"
+- confidence: number between 0 and 1
+- explanation: brief explanation of why this relationship type is best"""),
+                ("human", """Assertion 1 (ID: {assertion1_id}): {assertion1_content}
+
+Assertion 2 (ID: {assertion2_id}): {assertion2_content}
+
+Possible relationship types:
+{possible_relationships}
+
+Choose the best relationship type for this pair.""")
+            ])
+            
+            # Format possible relationships
+            possible_rels = "\n".join([
+                f"- {rel.relationship_type}: {rel.explanation} (confidence: {rel.confidence:.2f})"
+                for rel in conflict_group
+            ])
+            
+            # Run the conflict resolution
+            chain = conflict_prompt | self.llm
+            response = chain.invoke({
+                "assertion1_id": assertion1.id,
+                "assertion1_content": assertion1.content,
+                "assertion2_id": assertion2.id,
+                "assertion2_content": assertion2.content,
+                "possible_relationships": possible_rels
+            })
+            
+            try:
+                # Clean and parse response
+                content = response.content.strip()
+                if content.startswith("```json"):
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif content.startswith("```"):
+                    content = content.split("```")[1].split("```")[0].strip()
+                
+                resolution = json.loads(content)
+                chosen_type = resolution.get("chosen_relationship")
+                confidence = resolution.get("confidence", 0.8)
+                explanation = resolution.get("explanation", f"Resolved conflict: {chosen_type}")
+                
+                # Find the original relationship with the chosen type
+                chosen_rel = None
+                for rel in conflict_group:
+                    if rel.relationship_type == chosen_type:
+                        chosen_rel = rel
+                        break
+                
+                if chosen_rel:
+                    # Update with resolved confidence and explanation
+                    resolved_rel = Relationship(
+                        assertion1_id=chosen_rel.assertion1_id,
+                        assertion2_id=chosen_rel.assertion2_id,
+                        relationship_type=chosen_rel.relationship_type,
+                        confidence=confidence,
+                        explanation=explanation
+                    )
+                    resolved_relationships.append(resolved_rel)
+                else:
+                    # Fallback to highest confidence relationship
+                    best_rel = max(conflict_group, key=lambda r: r.confidence)
+                    resolved_relationships.append(best_rel)
+                    
+            except (json.JSONDecodeError, KeyError, TypeError):
+                # Fallback to highest confidence relationship
+                best_rel = max(conflict_group, key=lambda r: r.confidence)
+                resolved_relationships.append(best_rel)
+        
+        return resolved_relationships
+    
+    def _present_structure_node(self, state: StructureState) -> Dict[str, Any]:
+        """Present the structured relationships to the user."""
+        if not state.final_relationships:
+            return {
+                "messages": state.messages + [
+                    AIMessage(content="I didn't find any clear relationships between your assertions. This might mean they are independent ideas or the relationships are too subtle to detect automatically.")
+                ]
+            }
+        
+        # Group relationships by type
+        relationships_by_type = {}
+        for rel in state.final_relationships:
+            if rel.relationship_type not in relationships_by_type:
+                relationships_by_type[rel.relationship_type] = []
+            relationships_by_type[rel.relationship_type].append(rel)
+        
+        # Create assertions lookup for display
+        assertions_dict = {a.id: a for a in state.assertions}
+        
+        # Format the structure presentation
+        structure_text = "Here's the structured analysis of your assertions:\n\n"
+        
+        for rel_type, relationships in relationships_by_type.items():
+            structure_text += f"**{rel_type.upper()} RELATIONSHIPS:**\n"
+            for i, rel in enumerate(relationships, 1):
+                assertion1 = assertions_dict.get(rel.assertion1_id)
+                assertion2 = assertions_dict.get(rel.assertion2_id)
+                
+                if assertion1 and assertion2:
+                    structure_text += f"{i}. {assertion1.content}\n   → {rel_type.upper()} → {assertion2.content}\n"
+                    structure_text += f"   (Confidence: {rel.confidence:.2f}) - {rel.explanation}\n\n"
+        
+        structure_text += "\nThis structure shows how your assertions relate to each other. You can use this to organize your ideas into a coherent document or presentation."
+        
+        return {
+            "messages": state.messages + [AIMessage(content=structure_text)]
+        }
+    
+    
+    def _summarize_structure_node(self, state: StructureState) -> Dict[str, Any]:
+        """Summarize the structure analysis."""
+        if not state.final_relationships:
+            summary = "No relationships were found between the assertions."
+        else:
+            # Count relationships by type
+            rel_counts = {}
+            for rel in state.final_relationships:
+                rel_counts[rel.relationship_type] = rel_counts.get(rel.relationship_type, 0) + 1
+            
+            summary_parts = [f"Found {len(state.final_relationships)} total relationships:"]
+            for rel_type, count in rel_counts.items():
+                summary_parts.append(f"- {count} {rel_type} relationships")
+            
+            summary = "\n".join(summary_parts)
+        
+        final_message = f"Structure Analysis Complete!\n\n{summary}\n\nThe structured relationships can now be used to organize your assertions into a coherent document or presentation."
+        
+        return {
+            "chat_summary": summary,
+            "messages": state.messages + [AIMessage(content=final_message)]
+        }
+    
+    def run(self, assertions: List[Assertion], thread_id: str = "default") -> Dict[str, Any]:
+        """Run the structure workflow with a list of assertions."""
+        config = {"configurable": {"thread_id": thread_id}}
+        
+        initial_state = StructureState(
+            assertions=assertions,
+            messages=[HumanMessage(content=f"Analyzing structure for {len(assertions)} assertions.")]
+        )
+        
+        result = self.graph.invoke(initial_state, config)
+        return result
+
+
+# Factory function for LangGraph Studio
+def create_structure_workflow(config: dict = None):
+    """Factory function to create and return the compiled graph for LangGraph Studio."""
+    workflow = StructureWorkflow(config=config)
+    return workflow.graph
+
+
+# Alternative: Direct graph creation function
+def create_structure_graph(config: dict = None):
+    """Create the structure graph directly for LangGraph Studio."""
+    # Extract model name from config if available
+    model_name = "gpt-4o-mini"
+    if config and isinstance(config, dict):
+        model_name = config.get("model_name", "gpt-4o-mini")
+    
+    # Create LLM
+    llm = ChatOpenAI(model=model_name, temperature=0.3)
+    
+    # Create memory
+    memory = MemorySaver()
+    
+    # Build graph
+    builder = StateGraph(StructureState)
+    
+    # Create workflow instance for node methods
+    workflow = StructureWorkflow(model_name=model_name)
+    
+    # Add nodes
+    builder.add_node("analyze_evidence", workflow._analyze_evidence_node)
+    builder.add_node("analyze_background", workflow._analyze_background_node)
+    builder.add_node("analyze_cause", workflow._analyze_cause_node)
+    builder.add_node("analyze_contrast", workflow._analyze_contrast_node)
+    builder.add_node("analyze_condition", workflow._analyze_condition_node)
+    builder.add_node("merge_relationships", workflow._merge_relationships_node)
+    builder.add_node("present_structure", workflow._present_structure_node)
+    builder.add_node("summarize_structure", workflow._summarize_structure_node)
+    
+    # Add edges - all relationship analysis nodes run in parallel
+    builder.add_edge(START, "analyze_evidence")
+    builder.add_edge(START, "analyze_background")
+    builder.add_edge(START, "analyze_cause")
+    builder.add_edge(START, "analyze_contrast")
+    builder.add_edge(START, "analyze_condition")
+    
+    # All parallel nodes feed into merge
+    builder.add_edge("analyze_evidence", "merge_relationships")
+    builder.add_edge("analyze_background", "merge_relationships")
+    builder.add_edge("analyze_cause", "merge_relationships")
+    builder.add_edge("analyze_contrast", "merge_relationships")
+    builder.add_edge("analyze_condition", "merge_relationships")
+    
+    # Merge feeds into presentation
+    builder.add_edge("merge_relationships", "present_structure")
+    builder.add_edge("present_structure", "summarize_structure")
+    builder.add_edge("summarize_structure", END)
+    
+    return builder.compile(checkpointer=memory)
+
+
+# Example usage
+if __name__ == "__main__":
+    # Initialize the workflow
+    workflow = StructureWorkflow()
+    
+    # Example assertions (normally these would come from Idea Capture mode)
+    sample_assertions = [
+        Assertion(
+            id="assertion_1",
+            content="The current user interface is confusing and difficult to navigate",
+            confidence=0.9,
+            source="User feedback and usability testing"
+        ),
+        Assertion(
+            id="assertion_2", 
+            content="Users are having trouble finding the main features of the application",
+            confidence=0.8,
+            source="Analytics data and user interviews"
+        ),
+        Assertion(
+            id="assertion_3",
+            content="We need to prioritize mobile responsiveness in our design",
+            confidence=0.7,
+            source="Market research and device usage statistics"
+        ),
+        Assertion(
+            id="assertion_4",
+            content="Many users have requested dark mode support",
+            confidence=0.9,
+            source="Feature request surveys and user feedback"
+        )
+    ]
+    
+    # Run the workflow
+    result = workflow.run(sample_assertions)
+    print("Final result:", result)
