@@ -18,3 +18,10 @@ tiktoken>=0.7.0
 python-dotenv>=1.0.0
 pydantic>=2.8.0
 requests>=2.32.0
+fastapi
+python-multipart
+
+# Fast Whisper live transcription
+numpy>=1.23.0
+faster-whisper>=1.0.3
+uvicorn>=0.30.0
