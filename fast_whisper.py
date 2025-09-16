@@ -7,7 +7,7 @@ import re
 
 import numpy as np
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 try:
@@ -17,6 +17,7 @@ except Exception as e:  # pragma: no cover
 
 APP_DIR = Path(__file__).parent
 HTML_FILE = APP_DIR / "fast_whisper.html"
+JS_FILE = APP_DIR / "fast_whisper.js"
 
 app = FastAPI(title="Fast Whisper Live Translation")
 
@@ -55,6 +56,12 @@ async def index() -> HTMLResponse:
     if not HTML_FILE.exists():
         return HTMLResponse("<h1>fast_whisper.html not found</h1>", status_code=404)
     return HTMLResponse(HTML_FILE.read_text(encoding="utf-8"))
+
+@app.get("/fast_whisper.js")
+async def js_bundle():
+    if not JS_FILE.exists():
+        return PlainTextResponse("fast_whisper.js not found", status_code=404)
+    return FileResponse(JS_FILE, media_type="application/javascript")
 
 
 @app.get("/healthz")

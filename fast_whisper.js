@@ -1,0 +1,198 @@
+(async () => {
+  const startBtn = document.getElementById('start');
+  const stopBtn  = document.getElementById('stop');
+  const out      = document.getElementById('out'); // change the element ID to match your textarea ID
+  const statusEl = document.getElementById('status');
+  const appendCB = document.getElementById('append');
+
+  let ws, ctx, workletNode, stream, recActive=false;
+
+  // An AudioWorklet that gathers Float32 audio and posts 16-bit PCM WAV chunks
+  const workletCode = `
+    class PCMChunker extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.buffer = [];
+        this.sampleRate = sampleRate; // provided by AudioWorklet global
+        this.chunkFrames = Math.floor(this.sampleRate * 0.5); // 500ms chunks
+        this.framesAccum = 0;
+      }
+      static get parameterDescriptors() { return []; }
+
+      // Encode pcm Float32Array -> 16-bit little-endian PCM buffer
+      _f32ToPCM16(f32) {
+        const out = new Int16Array(f32.length);
+        for (let i=0;i<f32.length;i++) {
+          let s = Math.max(-1, Math.min(1, f32[i]));
+          out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        return new Uint8Array(out.buffer);
+      }
+
+      // Build a minimal WAV header for mono, 16kHz (or whatever sampleRate is), 16-bit
+      _wavHeader(numFrames, sampleRate) {
+        const numChannels = 1;
+        const bytesPerSample = 2;
+        const blockAlign = numChannels * bytesPerSample;
+        const byteRate = sampleRate * blockAlign;
+        const dataSize = numFrames * blockAlign;
+        const buffer = new ArrayBuffer(44);
+        const v = new DataView(buffer);
+        const writeStr = (o,s)=>{ for (let i=0;i<s.length;i++) v.setUint8(o+i, s.charCodeAt(i)); };
+        writeStr(0,"RIFF");
+        v.setUint32(4, 36 + dataSize, true);
+        writeStr(8,"WAVE");
+        writeStr(12,"fmt ");
+        v.setUint32(16, 16, true);            // PCM chunk size
+        v.setUint16(20, 1, true);             // PCM format
+        v.setUint16(22, numChannels, true);
+        v.setUint32(24, sampleRate, true);
+        v.setUint32(28, byteRate, true);
+        v.setUint16(32, blockAlign, true);
+        v.setUint16(34, 16, true);            // bits per sample
+        writeStr(36,"data");
+        v.setUint32(40, dataSize, true);
+        return new Uint8Array(buffer);
+      }
+
+      process(inputs) {
+        const input = inputs[0];
+        if (!input || input.length === 0) return true;
+        const mono = input[0]; // take channel 0
+        this.buffer.push(new Float32Array(mono));
+        this.framesAccum += mono.length;
+
+        if (this.framesAccum >= this.chunkFrames) {
+          const total = this.framesAccum;
+          const joined = new Float32Array(total);
+          let off = 0;
+          for (const buf of this.buffer) { joined.set(buf, off); off += buf.length; }
+          this.buffer.length = 0;
+          this.framesAccum = 0;
+
+          const pcm16 = this._f32ToPCM16(joined);
+          const header = this._wavHeader(joined.length, this.sampleRate);
+          const wav = new Uint8Array(header.length + pcm16.length);
+          wav.set(header, 0); wav.set(pcm16, header.length);
+
+          this.port.postMessage(wav.buffer, [wav.buffer]);
+        }
+        return true;
+      }
+    }
+    registerProcessor('pcm-chunker', PCMChunker);
+  `;
+
+  async function start() {
+    // Disable/enable buttons early
+    startBtn.disabled = true; stopBtn.disabled = false;
+
+    // Secure-context check first to avoid misleading "unsupported" messages
+    const isLocalhost = ['localhost','127.0.0.1','::1','0.0.0.0'].includes(location.hostname);
+    if (!window.isSecureContext && !isLocalhost) {
+      startBtn.disabled = false; stopBtn.disabled = true;
+      const onFile = location.protocol === 'file:';
+      if (onFile) {
+        alert('Microphone access is blocked on file:// pages. Please run: python fast_whisper.py and open http://localhost:8000/ in your browser.');
+      } else {
+        alert('Microphone access requires a secure context (https) or localhost. Please open this page via https or on http://localhost.');
+      }
+      return;
+    }
+
+    // Basic capability checks (after secure-context validation)
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      startBtn.disabled = false; stopBtn.disabled = true;
+      alert('getUserMedia is unavailable in this context. If you are using Chrome, ensure you are on https or http://localhost.');
+      return;
+    }
+
+    statusEl.textContent = 'requesting mic…';
+
+    // Optional: check current permission state if supported
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        const p = await navigator.permissions.query({ name: 'microphone' });
+        if (p.state === 'denied') {
+          startBtn.disabled = false; stopBtn.disabled = true;
+          alert('Microphone permission is blocked for this site. Please enable it in your browser settings and try again.');
+          return;
+        }
+      }
+    } catch (e) {
+      // Permissions API not supported or failed; proceed to request directly
+    }
+
+    // Request microphone
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000 } });
+    } catch (e) {
+      startBtn.disabled = false; stopBtn.disabled = true;
+      alert('Mic permission or device error: ' + (e && e.message ? e.message : e));
+      return;
+    }
+
+    // Build WS URL dynamically (supports proxies and https)
+    const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const wsUrl = `${wsProto}://${location.host}/ws/transcribe`;
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => statusEl.textContent = 'connected';
+    ws.onmessage = (ev) => {
+      const raw = typeof ev.data === 'string' ? ev.data : '';
+      if (raw.startsWith('[ERROR]')) { statusEl.textContent = raw; return; }
+      const clean = raw.replace(/^[\[](PARTIAL|FINAL)[\]]\s*/, '');
+      if (raw.startsWith('[PARTIAL]')) {
+        statusEl.textContent = 'transcribing (partial)';
+        // Do not modify out.value on partials; avoid overwriting user edits mid-session
+        return;
+      }
+      if (raw.startsWith('[FINAL]')) {
+        statusEl.textContent = 'final';
+        if (clean) {
+          const prev = out.value || '';
+          const sep = prev && !/\s$/.test(prev) ? ' ' : '';
+          out.value = (prev + sep + clean).trim();
+        }
+        return;
+      }
+      // Fallback: if message has no tag, avoid clobbering; append conservatively
+      if (clean) {
+        const prev = out.value || '';
+        const sep = prev && !/\s$/.test(prev) ? ' ' : '';
+        out.value = (prev + sep + clean).trim();
+      }
+    };
+    ws.onclose = () => statusEl.textContent = 'connection closed';
+
+    // AudioWorklet setup (after permission)
+    ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    try { await ctx.resume(); } catch {}
+    const src = ctx.createMediaStreamSource(stream);
+    const blob = new Blob([workletCode], { type: 'application/javascript' });
+    const url = URL.createObjectURL(blob);
+    await ctx.audioWorklet.addModule(url);
+    workletNode = new AudioWorkletNode(ctx, 'pcm-chunker');
+    workletNode.port.onmessage = (e) => {
+      if (ws && ws.readyState === 1) ws.send(e.data); // send WAV chunk
+    };
+    // Do not route to speakers by default to avoid feedback; connect only to worklet
+    src.connect(workletNode);
+    recActive = true;
+    statusEl.textContent = 'recording…';
+  }
+
+  function stop() {
+    if (!recActive) return;
+    recActive = false;
+    stopBtn.disabled = true; startBtn.disabled = false;
+    try { workletNode && workletNode.disconnect(); } catch {}
+    try { ctx && ctx.close(); } catch {}
+    try { stream && stream.getTracks().forEach(t=>t.stop()); } catch {}
+    // Signal end of recording to server; do NOT close WebSocket so we can receive [FINAL]
+    try { if (ws && ws.readyState === 1) { ws.send("[END]"); statusEl.textContent = 'processing…'; } } catch {}
+  }
+
+  startBtn.addEventListener('click', start);
+  stopBtn .addEventListener('click',  stop);
+})();
