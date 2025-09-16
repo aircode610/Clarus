@@ -1,7 +1,6 @@
 import os
 import io
 import zipfile
-import shutil
 import requests
 import streamlit as st
 from audiorecorder import audiorecorder
@@ -54,14 +53,10 @@ def get_vosk_model(lang_key: str) -> Model:
                     for chunk in r.iter_content(chunk_size=8192):
                         if chunk:
                             f.write(chunk)
-            # Extract
             with zipfile.ZipFile(zip_path, 'r') as zf:
                 zf.extractall(MODELS_DIR)
             os.remove(zip_path)
-            # Some archives unpack to a single folder already named correctly
-            # just ensure it exists
             if not os.path.isdir(model_dir):
-                # try to find the first directory extracted
                 for name in os.listdir(MODELS_DIR):
                     cand = os.path.join(MODELS_DIR, name)
                     if os.path.isdir(cand) and meta["dirname"] in name:
@@ -73,6 +68,8 @@ def get_vosk_model(lang_key: str) -> Model:
 st.sidebar.header("Settings")
 lang_key = st.sidebar.selectbox("Recognition language", list(VOSK_MODELS.keys()), index=0)
 auto_punct = st.sidebar.checkbox("Enable auto punctuation (if model supports)", value=True)
+append_mode = st.sidebar.checkbox("Append new take to existing text", value=True)
+insert_newline = st.sidebar.checkbox("Insert a newline between takes", value=True)
 
 # --- Recorder UI ---
 st.subheader("Recorder")
@@ -88,32 +85,22 @@ audio = audiorecorder(
 if "transcript" not in st.session_state:
     st.session_state.transcript = ""
 
-# --- When audio captured ---
 if len(audio) > 0:
-    # Normalize to mono, 16k for Vosk best results
-    # audiorecorder returns a pydub AudioSegment
     seg: AudioSegment = audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
-
-    # Export raw PCM WAV bytes
     wav_buf = io.BytesIO()
     seg.export(wav_buf, format="wav")
     wav_bytes = wav_buf.getvalue()
 
-    # Load model (cached)
     model = get_vosk_model(lang_key)
 
-    # Recognize
     rec = KaldiRecognizer(model, 16000)
     rec.SetWords(True)
     try:
-        # Some models handle punctuation via "--config" when building graph; Vosk python exposes limited toggles
-        # We'll still call SetPartialWords for better streaming—but here we just do batch
         if auto_punct:
             pass
     except Exception:
         pass
 
-    # Feed to recognizer in chunks
     import wave
     wf = wave.open(io.BytesIO(wav_bytes), "rb")
     result_text = []
@@ -125,19 +112,22 @@ if len(audio) > 0:
             j = json.loads(rec.Result())
             if j.get("text"):
                 result_text.append(j["text"])
-    # Final bits
     j = json.loads(rec.FinalResult())
     if j.get("text"):
         result_text.append(j["text"])
 
-    transcript = (" ".join(result_text)).strip()
-    st.session_state.transcript = transcript
+    new_transcript = (" ".join(result_text)).strip()
+    if append_mode:
+        prev = st.session_state.get("transcript", "")
+        sep = "\n" if insert_newline and prev and new_transcript else (" " if prev and new_transcript else "")
+        st.session_state.transcript = f"{prev}{sep}{new_transcript}"
+    else:
+        st.session_state.transcript = new_transcript
 
 st.subheader("Transcript")
-st.text_area("Text", value=st.session_state.transcript, height=200)
+st.text_area("text", label_visibility="collapsed", value=st.session_state.transcript, height=200)
 
-st.info(
-    "Tip: If your mic access is blocked by the browser, allow microphone permissions and reload the page.")
+st.info("Tip: If your mic access is blocked by the browser, allow microphone permissions and reload the page.")
 
 st.markdown(
     """
