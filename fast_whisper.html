@@ -15,7 +15,6 @@
   <div class="row">
     <button id="start">Start</button>
     <button id="stop" disabled>Stop</button>
-    <label><input type="checkbox" id="append" checked> Append partials</label>
     <span id="status" class="muted">idle</span>
   </div>
   <textarea id="out" placeholder="Your speech will appear here… (you can edit freely)"></textarea>
@@ -24,7 +23,7 @@
 (async () => {
   const startBtn = document.getElementById('start');
   const stopBtn  = document.getElementById('stop');
-  const out      = document.getElementById('out');
+  const out      = document.getElementById('out'); // change the element ID to match your textarea ID
   const statusEl = document.getElementById('status');
   const appendCB = document.getElementById('append');
 
@@ -164,10 +163,27 @@
     ws.onmessage = (ev) => {
       const raw = typeof ev.data === 'string' ? ev.data : '';
       if (raw.startsWith('[ERROR]')) { statusEl.textContent = raw; return; }
-      let clean = raw.replace(/^[\[](PARTIAL|FINAL)[\]]\s*/, '');
-      if (raw.startsWith('[PARTIAL]')) statusEl.textContent = 'transcribing (partial)';
-      else if (raw.startsWith('[FINAL]')) statusEl.textContent = 'final';
-      if (clean) out.value = clean;
+      const clean = raw.replace(/^[\[](PARTIAL|FINAL)[\]]\s*/, '');
+      if (raw.startsWith('[PARTIAL]')) {
+        statusEl.textContent = 'transcribing (partial)';
+        // Do not modify out.value on partials; avoid overwriting user edits mid-session
+        return;
+      }
+      if (raw.startsWith('[FINAL]')) {
+        statusEl.textContent = 'final';
+        if (clean) {
+          const prev = out.value || '';
+          const sep = prev && !/\s$/.test(prev) ? ' ' : '';
+          out.value = (prev + sep + clean).trim();
+        }
+        return;
+      }
+      // Fallback: if message has no tag, avoid clobbering; append conservatively
+      if (clean) {
+        const prev = out.value || '';
+        const sep = prev && !/\s$/.test(prev) ? ' ' : '';
+        out.value = (prev + sep + clean).trim();
+      }
     };
     ws.onclose = () => statusEl.textContent = 'connection closed';
 

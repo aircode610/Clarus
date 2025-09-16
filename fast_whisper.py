@@ -177,7 +177,7 @@ async def ws_transcribe(ws: WebSocket):
     await ws.accept()
 
     # End-only mode: buffer all audio during recording; transcribe once after [END]
-    translate = True
+    translate = False
     target_sr = 16000
     chunks: List[np.ndarray] = []  # float32 mono at 16 kHz
 
