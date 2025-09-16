@@ -55,6 +55,7 @@ class IdeaCaptureWorkflow:
         builder.add_node("extract_assertions", self._extract_assertions_node)
         builder.add_node("present_assertions", self._present_assertions_node)
         builder.add_node("user_confirmation", self._user_confirmation_node)
+        builder.add_node("route_decision", self._route_decision_node)
         builder.add_node("update_assertions", self._update_assertions_node)
         builder.add_node("summarize_chat", self._summarize_chat_node)
         
@@ -62,11 +63,12 @@ class IdeaCaptureWorkflow:
         builder.add_edge(START, "extract_assertions")
         builder.add_edge("extract_assertions", "present_assertions")
         builder.add_edge("present_assertions", "user_confirmation")
+        builder.add_edge("user_confirmation", "route_decision")
         builder.add_conditional_edges(
-            "user_confirmation",
-            self._should_continue,
+            "route_decision",
+            self._route_after_confirmation,
             {
-                "continue": "update_assertions",
+                "update": "update_assertions",
                 "end": "summarize_chat"
             }
         )
@@ -77,7 +79,16 @@ class IdeaCaptureWorkflow:
     
     def _extract_assertions_node(self, state: IdeaCaptureState) -> Dict[str, Any]:
         """Extract assertions from user input using LLM."""
-        if not state.current_input:
+        # Get input text from current_input or from the latest human message
+        input_text = state.current_input
+        if not input_text and state.messages:
+            # Find the latest human message
+            for message in reversed(state.messages):
+                if isinstance(message, HumanMessage):
+                    input_text = message.content
+                    break
+        
+        if not input_text:
             return {}
         
         # Create prompt for assertion extraction
@@ -86,10 +97,16 @@ class IdeaCaptureWorkflow:
 
 Your task is to:
 1. Analyze the user's input text
-2. Extract clear, specific assertions
+2. Extract clear, specific assertions that are factual statements or claims
 3. Each assertion should be atomic (one clear idea)
 4. Provide confidence scores (0-1) for each assertion
 5. Include the source text that led to each assertion
+
+CRITICAL RULES:
+- Only extract assertions that are factual statements or claims about the world
+- Do NOT extract user instructions, commands, or requests (like "remove X", "add Y", "I want to...")
+- Do NOT extract questions or uncertain statements
+- Focus on statements that could be building blocks for a document
 
 IMPORTANT: Return ONLY a valid JSON array. Do not include any other text.
 
@@ -103,14 +120,14 @@ Return your response as a JSON list of assertions with this structure:
     }}
 ]
 
-Focus on extracting meaningful, actionable assertions that could be building blocks for a document."""),
+If the input contains no extractable assertions (only instructions/questions), return an empty array: []"""),
             ("human", "Extract assertions from this text: {input_text}")
         ])
         
         # Run LLM
         chain = prompt | self.llm
         response = chain.invoke({
-            "input_text": state.current_input
+            "input_text": input_text
         })
         
         try:
@@ -139,19 +156,27 @@ Focus on extracting meaningful, actionable assertions that could be building blo
                 # Ensure required fields exist
                 assertion_data.setdefault("id", f"assertion_{len(state.assertions) + i + 1}")
                 assertion_data.setdefault("confidence", 0.8)
-                assertion_data.setdefault("source", state.current_input[:100] + "...")
+                assertion_data.setdefault("source", input_text[:100] + "...")
                 
                 new_assertions.append(Assertion(**assertion_data))
             
             # Add to existing assertions
             all_assertions = state.assertions + new_assertions
             
-            return {
-                "assertions": all_assertions,
-                "messages": state.messages + [
-                    AIMessage(content=f"I've extracted {len(new_assertions)} new assertions from your input.")
-                ]
-            }
+            if len(new_assertions) > 0:
+                return {
+                    "assertions": all_assertions,
+                    "messages": state.messages + [
+                        AIMessage(content=f"I've extracted {len(new_assertions)} new assertions from your input.")
+                    ]
+                }
+            else:
+                # No new assertions extracted - this might be an instruction
+                return {
+                    "messages": state.messages + [
+                        AIMessage(content="I didn't extract any new assertions from your input. This might be an instruction rather than new content to extract assertions from.")
+                    ]
+                }
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             # Return error message with the actual response for debugging
             return {
@@ -182,16 +207,16 @@ Focus on extracting meaningful, actionable assertions that could be building blo
         }
     
     def _user_confirmation_node(self, state: IdeaCaptureState) -> Command:
-        """Get user confirmation and modifications."""
+        """Get user feedback on assertions in a conversational way."""
+        # Format assertions for display
+        assertions_text = "\n".join([
+            f"{i+1}. {assertion.content} (confidence: {assertion.confidence:.2f})"
+            for i, assertion in enumerate(state.assertions)
+        ])
+        
         user_response = interrupt({
-            "type": "user_confirmation",
-            "message": "Please review the assertions above. You can:",
-            "options": [
-                "Accept all assertions as-is",
-                "Remove specific assertions (provide numbers)",
-                "Add new assertions (provide text)",
-                "Modify existing assertions (provide number and new text)"
-            ],
+            "type": "user_feedback",
+            "message": f"Here are the current assertions:\n\n{assertions_text}\n\nPlease let me know what you'd like to do with these assertions. You can:\n- Accept them as they are\n- Ask me to remove specific ones\n- Add new assertions\n- Modify existing ones\n- Or just tell me what you think!\n\nWhat would you like to do?",
             "current_assertions": [a.dict() for a in state.assertions]
         })
         
@@ -200,33 +225,55 @@ Focus on extracting meaningful, actionable assertions that could be building blo
                 "messages": state.messages + [HumanMessage(content=user_response.get("response", ""))],
                 "current_input": user_response.get("response", "")
             },
-            goto="update_assertions" if user_response.get("action") != "accept" else "summarize_chat"
+            goto="route_decision"
         )
     
+    def _route_decision_node(self, state: IdeaCaptureState) -> Dict[str, Any]:
+        """Route decision node - just passes through the state."""
+        # This node doesn't modify state, just serves as a routing point
+        return {}
+    
     def _update_assertions_node(self, state: IdeaCaptureState) -> Dict[str, Any]:
-        """Update assertions based on user feedback."""
+        """Update assertions based on user feedback using LLM to understand intent."""
         user_input = state.current_input
         
         if not user_input:
             return {}
         
-        # Parse user modifications
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are helping to update assertions based on user feedback.
-
-The user may want to:
-1. Remove assertions (they'll mention numbers)
-2. Add new assertions (they'll provide new text)
-3. Modify existing assertions (they'll provide number and new text)
+        
+        # First, let the LLM understand what the user wants to do
+        intent_prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are analyzing user feedback about assertions to understand their intent.
 
 Current assertions:
 {current_assertions}
 
 User feedback: {user_feedback}
 
-Return updated assertions as JSON list with the same structure as before.
-Only include assertions that should remain after the user's modifications."""),
-            ("human", "Update the assertions based on this feedback: {user_feedback}")
+CRITICAL: When the user mentions removing, deleting, or getting rid of assertions, they want to REMOVE existing assertions, NOT add new ones.
+
+Analyze the user's intent and determine:
+1. Do they want to accept all assertions as-is? (return "accept") - Look for: "yes", "good", "perfect", "keep them", "accept", "fine", "ok", "sounds good", "looks good", "that works", "i'm satisfied"
+2. Do they want to remove specific assertions? (return "remove" and list which ones by index)
+3. Do they want to add new assertions? (return "add" and provide the new assertions)
+4. Do they want to modify existing assertions? (return "modify" and provide changes)
+5. Do they want to continue the conversation? (return "continue")
+
+For removal: Look for keywords like "remove", "delete", "get rid of", "don't want", "take out", etc.
+For removal: Match assertions by content similarity, not by exact text match.
+For removal: Return the INDEX (1-based) of assertions to remove.
+
+IMPORTANT: Return ONLY a valid JSON object. Do not include any other text.
+
+Return your analysis as JSON:
+{{
+    "intent": "accept|remove|add|modify|continue",
+    "action": "description of what to do",
+    "new_assertions": ["list of new assertions if adding"],
+    "remove_indices": [list of 1-based indices to remove if removing],
+    "modifications": {{"index": "new_content"}} if modifying
+}}"""),
+            ("human", "Analyze this user feedback: {user_feedback}")
         ])
         
         current_assertions_text = "\n".join([
@@ -234,26 +281,126 @@ Only include assertions that should remain after the user's modifications."""),
             for i, assertion in enumerate(state.assertions)
         ])
         
-        chain = prompt | self.llm
+        chain = intent_prompt | self.llm
         response = chain.invoke({
             "current_assertions": current_assertions_text,
             "user_feedback": user_input
         })
         
         try:
-            assertions_data = json.loads(response.content)
-            updated_assertions = [Assertion(**assertion) for assertion in assertions_data]
+            # Clean the response content
+            content = response.content.strip()
             
+            # Try to extract JSON from the response if it's wrapped in markdown
+            if content.startswith("```json"):
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif content.startswith("```"):
+                content = content.split("```")[1].split("```")[0].strip()
+            
+            # Parse the intent analysis
+            intent_data = json.loads(content)
+            intent = intent_data.get("intent", "continue")
+            
+            if intent == "accept":
+                return {
+                    "messages": state.messages + [
+                        AIMessage(content="Perfect! I'll keep all the assertions as they are. The session is now complete with your final set of assertions.")
+                    ]
+                }
+            
+            elif intent == "remove":
+                # Remove specified assertions
+                remove_indices = intent_data.get("remove_indices", [])
+                
+                # Convert 1-based indices to 0-based and filter valid indices
+                valid_remove_indices = []
+                for idx in remove_indices:
+                    try:
+                        # Convert to 0-based index
+                        zero_based_idx = int(idx) - 1
+                        if 0 <= zero_based_idx < len(state.assertions):
+                            valid_remove_indices.append(zero_based_idx)
+                    except (ValueError, TypeError):
+                        continue
+                
+                # Remove duplicates and sort in reverse order to avoid index shifting issues
+                valid_remove_indices = sorted(list(set(valid_remove_indices)), reverse=True)
+                
+                # Create updated assertions list
+                updated_assertions = state.assertions.copy()
+                for idx in valid_remove_indices:
+                    updated_assertions.pop(idx)
+                
+                removed_count = len(valid_remove_indices)
+                if removed_count > 0:
+                    return {
+                        "assertions": updated_assertions,
+                        "messages": state.messages + [
+                            AIMessage(content=f"I've removed {removed_count} assertion(s). You now have {len(updated_assertions)} assertions remaining.")
+                        ]
+                    }
+                else:
+                    return {
+                        "messages": state.messages + [
+                            AIMessage(content="I couldn't identify which specific assertions you wanted to remove. Could you please specify the numbers of the assertions you'd like to remove?")
+                        ]
+                    }
+            
+            elif intent == "add":
+                # Add new assertions
+                new_assertions_text = intent_data.get("new_assertions", [])
+                if new_assertions_text:
+                    # Create new assertions
+                    new_assertions = []
+                    for i, content in enumerate(new_assertions_text):
+                        new_assertions.append(Assertion(
+                            id=f"assertion_{len(state.assertions) + i + 1}",
+                            content=content,
+                            confidence=0.8,
+                            source=user_input[:100] + "..."
+                        ))
+                    
+                    updated_assertions = state.assertions + new_assertions
+                    
+                    return {
+                        "assertions": updated_assertions,
+                        "messages": state.messages + [
+                            AIMessage(content=f"I've added {len(new_assertions)} new assertions. You now have {len(updated_assertions)} total assertions.")
+                        ]
+                    }
+            
+            elif intent == "modify":
+                # Modify existing assertions
+                modifications = intent_data.get("modifications", {})
+                updated_assertions = state.assertions.copy()
+                
+                for index_str, new_content in modifications.items():
+                    try:
+                        index = int(index_str) - 1  # Convert to 0-based index
+                        if 0 <= index < len(updated_assertions):
+                            updated_assertions[index].content = new_content
+                    except (ValueError, IndexError):
+                        continue
+                
+                return {
+                    "assertions": updated_assertions,
+                    "messages": state.messages + [
+                        AIMessage(content=f"I've updated the assertions as requested. You now have {len(updated_assertions)} assertions.")
+                    ]
+                }
+            
+            else:  # continue or unknown intent
+                return {
+                    "messages": state.messages + [
+                        AIMessage(content="I understand. Let me know what you'd like to do with the assertions, or if you have any other thoughts to add.")
+                    ]
+                }
+                
+        except (json.JSONDecodeError, KeyError, TypeError) as e:
+            # If we can't parse the intent, just continue the conversation
             return {
-                "assertions": updated_assertions,
                 "messages": state.messages + [
-                    AIMessage(content=f"Assertions updated. You now have {len(updated_assertions)} assertions.")
-                ]
-            }
-        except json.JSONDecodeError:
-            return {
-                "messages": state.messages + [
-                    AIMessage(content="I had trouble updating the assertions. Please try again.")
+                    AIMessage(content=f"I'm not sure I understood exactly what you'd like to do. Could you clarify what you want to change about the assertions? (Error: {str(e)})")
                 ]
             }
     
@@ -276,22 +423,51 @@ Only include assertions that should remain after the user's modifications."""),
         chain = prompt | self.llm
         response = chain.invoke({"conversation": conversation_text})
         
+        # Format final assertions list
+        final_assertions_text = ""
+        if state.assertions:
+            final_assertions_text = "\n\nFinal Assertions:\n" + "\n".join([
+                f"{i+1}. {assertion.content} (confidence: {assertion.confidence:.2f})"
+                for i, assertion in enumerate(state.assertions)
+            ])
+        
+        # Create final message with summary and assertions
+        final_message = f"Session complete!\n\nSummary: {response.content}{final_assertions_text}"
+        
         return {
             "chat_summary": response.content,
             "messages": state.messages + [
-                AIMessage(content=f"Session complete! Summary: {response.content}")
+                AIMessage(content=final_message)
             ]
         }
     
-    def _should_continue(self, state: IdeaCaptureState) -> Literal["continue", "end"]:
-        """Determine if the workflow should continue or end."""
-        # Check if user wants to continue
+    def _route_after_confirmation(self, state: IdeaCaptureState) -> Literal["update", "end"]:
+        """Route after user confirmation - either update assertions or end session."""
+        # Check if user wants to end the session
         if state.messages and isinstance(state.messages[-1], HumanMessage):
             last_message = state.messages[-1].content.lower()
-            if any(word in last_message for word in ["done", "finish", "complete", "end"]):
+            # Expanded list of completion indicators
+            completion_words = [
+                "done", "finish", "complete", "end", "that's all", "good", "perfect", "thanks", 
+                "looks good", "that's perfect", "i'm done", "all set", "sounds good", "great",
+                "yes", "yep", "ok", "okay", "sure", "fine", "acceptable", "good to go",
+                "no more", "nothing else", "that's it", "i'm satisfied", "i'm happy",
+                "accept", "keep them", "leave them", "don't change", "no changes", 
+                "they're fine", "that works", "i'll keep them"
+            ]
+            if any(word in last_message for word in completion_words):
                 return "end"
         
-        return "continue"
+        # Check if the last AI message suggests ending
+        if state.messages and isinstance(state.messages[-1], AIMessage):
+            last_ai_message = state.messages[-1].content.lower()
+            if any(phrase in last_ai_message for phrase in [
+                "ready to finish", "satisfied with", "looks good", "perfect", "all set"
+            ]) and len(state.messages) > 2:
+                return "end"
+        
+        # Default to update if user wants changes
+        return "update"
     
     def run(self, initial_input: str, thread_id: str = "default") -> Dict[str, Any]:
         """Run the idea capture workflow."""
@@ -337,6 +513,7 @@ def create_idea_capture_graph(config: dict = None):
     builder.add_node("extract_assertions", workflow._extract_assertions_node)
     builder.add_node("present_assertions", workflow._present_assertions_node)
     builder.add_node("user_confirmation", workflow._user_confirmation_node)
+    builder.add_node("route_decision", workflow._route_decision_node)
     builder.add_node("update_assertions", workflow._update_assertions_node)
     builder.add_node("summarize_chat", workflow._summarize_chat_node)
     
@@ -344,11 +521,12 @@ def create_idea_capture_graph(config: dict = None):
     builder.add_edge(START, "extract_assertions")
     builder.add_edge("extract_assertions", "present_assertions")
     builder.add_edge("present_assertions", "user_confirmation")
+    builder.add_edge("user_confirmation", "route_decision")
     builder.add_conditional_edges(
-        "user_confirmation",
-        workflow._should_continue,
+        "route_decision",
+        workflow._route_after_confirmation,
         {
-            "continue": "update_assertions",
+            "update": "update_assertions",
             "end": "summarize_chat"
         }
     )
