@@ -13,34 +13,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
 import json
-from idea_capture import Assertion
 
-
-class Relationship(BaseModel):
-    """Represents a relationship between two assertions."""
-    assertion1_id: str = Field(description="ID of the first assertion")
-    assertion2_id: str = Field(description="ID of the second assertion")
-    relationship_type: Literal["evidence", "background", "cause", "contrast", "condition"] = Field(
-        description="Type of relationship between the assertions"
-    )
-    confidence: float = Field(description="Confidence score (0-1) for this relationship")
-    explanation: str = Field(description="Brief explanation of why this relationship exists")
-
-
-class StructureState(BaseModel):
-    """State for the Structure workflow."""
-    messages: Annotated[List[BaseMessage], add_messages] = Field(default_factory=list)
-    assertions: List[Assertion] = Field(default_factory=list)
-    evidence_relationships: List[Relationship] = Field(default_factory=list)
-    background_relationships: List[Relationship] = Field(default_factory=list)
-    cause_relationships: List[Relationship] = Field(default_factory=list)
-    contrast_relationships: List[Relationship] = Field(default_factory=list)
-    condition_relationships: List[Relationship] = Field(default_factory=list)
-    final_relationships: List[Relationship] = Field(default_factory=list)
-    current_input: str = Field(default="")
-    chat_summary: str = Field(default="")
+from models import Assertion, Relationship, StructureState
 
 
 class StructureWorkflow:

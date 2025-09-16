@@ -13,25 +13,9 @@ from langgraph.types import interrupt, Command
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field
 import json
 
-
-class Assertion(BaseModel):
-    """Represents a discrete, atomic assertion extracted from user input."""
-    id: str = Field(description="Unique identifier for the assertion")
-    content: str = Field(description="The actual assertion text")
-    confidence: float = Field(description="Confidence score (0-1) for this assertion")
-    source: str = Field(description="Source text that led to this assertion")
-
-
-class IdeaCaptureState(BaseModel):
-    """State for the Idea Capture workflow."""
-    messages: Annotated[List[BaseMessage], add_messages] = Field(default_factory=list)
-    assertions: List[Assertion] = Field(default_factory=list)
-    current_input: str = Field(default="")
-    iteration_count: int = Field(default=0)
-    chat_summary: str = Field(default="")
+from models import Assertion, IdeaCaptureState
 
 
 class IdeaCaptureWorkflow:
@@ -217,7 +201,7 @@ If the input contains no extractable assertions (only instructions/questions), r
         user_response = interrupt({
             "type": "user_feedback",
             "message": f"Here are the current assertions:\n\n{assertions_text}\n\nPlease let me know what you'd like to do with these assertions. You can:\n- Accept them as they are\n- Ask me to remove specific ones\n- Add new assertions\n- Modify existing ones\n- Or just tell me what you think!\n\nWhat would you like to do?",
-            "current_assertions": [a.dict() for a in state.assertions]
+            "current_assertions": [a.model_dump() for a in state.assertions]
         })
         
         return Command(
