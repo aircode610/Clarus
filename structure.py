@@ -71,24 +71,24 @@ class StructureWorkflow:
         
         relationship_descriptions = {
             "evidence": {
-                "description": "Evidence relationships where one assertion provides evidence, examples, or support for another",
-                "examples": "A provides evidence for B, A is an example of B, A supports B's claim"
+                "description": "Evidence relationships where one assertion provides evidence, examples, support, or substantiation for another",
+                "examples": "A provides evidence for B, A is an example of B, A supports B's claim, A demonstrates B, A illustrates B"
             },
             "background": {
-                "description": "Background relationships where one assertion provides context, setting, or background information for another",
-                "examples": "A provides background for B, A sets the context for B, A gives necessary information for understanding B"
+                "description": "Background relationships where one assertion provides context, setting, background information, or historical context for another",
+                "examples": "A provides background for B, A sets the context for B, A gives necessary information for understanding B, A explains the history of B"
             },
             "cause": {
-                "description": "Cause relationships where one assertion causes, leads to, or results in another",
-                "examples": "A causes B, A leads to B, A results in B, A is the reason for B"
+                "description": "Cause relationships where one assertion causes, leads to, results in, or contributes to another",
+                "examples": "A causes B, A leads to B, A results in B, A is the reason for B, A contributes to B, A triggers B"
             },
             "contrast": {
-                "description": "Contrast relationships where assertions present opposing, contradictory, or contrasting viewpoints",
-                "examples": "A contrasts with B, A contradicts B, A opposes B, A is different from B"
+                "description": "Contrast relationships where assertions present opposing, contradictory, contrasting, or different viewpoints",
+                "examples": "A contrasts with B, A contradicts B, A opposes B, A is different from B, A conflicts with B"
             },
             "condition": {
-                "description": "Condition relationships where one assertion is a prerequisite, condition, or requirement for another",
-                "examples": "A is a condition for B, A is required for B, A must happen before B, A enables B"
+                "description": "Condition relationships where one assertion is a prerequisite, condition, requirement, or enabling factor for another",
+                "examples": "A is a condition for B, A is required for B, A must happen before B, A enables B, A determines B"
             }
         }
         
@@ -105,11 +105,12 @@ Your task is to find {relationship_type} relationships between the given asserti
 Examples: {rel_info['examples']}
 
 CRITICAL RULES:
-- Only identify relationships that clearly fit the {relationship_type} pattern
-- Be conservative - only include relationships you're confident about
+- Look for relationships that fit the {relationship_type} pattern, even if subtle
+- Be thorough - include relationships you can reasonably identify
 - Each relationship should be between exactly 2 assertions
 - Provide confidence scores (0-1) for each relationship
 - Include brief explanations for why the relationship exists
+- Consider temporal, causal, logical, and semantic connections
 
 IMPORTANT: Return ONLY a valid JSON array. Do not include any other text.
 
@@ -119,6 +120,13 @@ Return your response as a JSON list of relationships. Each relationship should h
 - relationship_type: "{relationship_type}"
 - confidence: number between 0 and 1
 - explanation: brief explanation of the relationship
+
+EXAMPLES OF {relationship_type.upper()} RELATIONSHIPS:
+- Historical events providing background for current situations
+- Data points providing evidence for broader claims
+- Causes leading to effects or consequences
+- Conditions that must be met for outcomes
+- Contrasting viewpoints or different perspectives
 
 If no {relationship_type} relationships are found, return an empty array: []"""),
             ("human", "Analyze these assertions for {relationship_type} relationships:\n\n{assertions_text}")
@@ -195,10 +203,20 @@ If no {relationship_type} relationships are found, return an empty array: []""")
                 assertion1_id = rel_data.get("assertion1_id")
                 assertion2_id = rel_data.get("assertion2_id")
                 
+                # Convert to strings if they're integers (LLM sometimes returns integers)
+                if isinstance(assertion1_id, int):
+                    assertion1_id = str(assertion1_id)
+                if isinstance(assertion2_id, int):
+                    assertion2_id = str(assertion2_id)
+                
                 if (assertion1_id and assertion2_id and 
                     assertion1_id != assertion2_id and
                     any(a.id == assertion1_id for a in state.assertions) and
                     any(a.id == assertion2_id for a in state.assertions)):
+                    
+                    # Update the relationship data with converted IDs
+                    rel_data["assertion1_id"] = assertion1_id
+                    rel_data["assertion2_id"] = assertion2_id
                     
                     relationships.append(Relationship(**rel_data))
             
