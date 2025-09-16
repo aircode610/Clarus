@@ -160,11 +160,17 @@ If the input contains no extractable assertions (only instructions/questions), r
                     )
                     updated_change_history.add_change(change_record)
                 
+                # Create detailed message for extracted assertions
+                extract_message = f"I've extracted {len(new_assertions)} new assertions from your input:\n"
+                for i, assertion in enumerate(new_assertions, 1):
+                    extract_message += f"{i}. {assertion.content}\n"
+                extract_message += f"\nCurrent total: {len(all_assertions)} assertions"
+                
                 return {
                     "assertions": all_assertions,
                     "change_history": updated_change_history,
                     "messages": state.messages + [
-                        AIMessage(content=f"I've extracted {len(new_assertions)} new assertions from your input.")
+                        AIMessage(content=extract_message)
                     ]
                 }
             else:
@@ -390,7 +396,7 @@ Return your analysis as JSON:
                     removal_message = f"Removed {removed_count} assertion(s):\n"
                     for i, content in enumerate(removed_assertions, 1):
                         removal_message += f"{i}. {content}\n"
-                    removal_message += f"Remaining: {len(updated_assertions)} assertions"
+                    removal_message += f"\nRemaining: {len(updated_assertions)} assertions"
                     
                     return {
                         "assertions": updated_assertions,
@@ -434,11 +440,17 @@ Return your analysis as JSON:
                         )
                         updated_change_history.add_change(change_record)
                     
+                    # Create detailed message for added assertions
+                    add_message = f"I've added {len(new_assertions)} new assertions:\n"
+                    for i, assertion in enumerate(new_assertions, 1):
+                        add_message += f"{i}. {assertion.content}\n"
+                    add_message += f"\nCurrent total: {len(updated_assertions)} assertions"
+                    
                     return {
                         "assertions": updated_assertions,
                         "change_history": updated_change_history,
                         "messages": state.messages + [
-                            AIMessage(content=f"I've added {len(new_assertions)} new assertions. You now have {len(updated_assertions)} total assertions.")
+                            AIMessage(content=add_message)
                         ]
                     }
             
@@ -447,33 +459,58 @@ Return your analysis as JSON:
                 modifications = intent_data.get("modifications", {})
                 updated_assertions = state.assertions.copy()
                 updated_change_history = state.change_history
+                modification_changes = []  # Store changes for the message
                 
                 for index_str, new_content in modifications.items():
                     try:
                         index = int(index_str) - 1  # Convert to 0-based index
                         if 0 <= index < len(updated_assertions):
                             original_assertion = updated_assertions[index]
-                            updated_assertions[index].content = new_content
+                            original_content = original_assertion.content  # Capture original content
                             
-                            # Track the modification in change history
-                            change_record = ChangeRecord(
-                                change_id=f"modify_{len(updated_change_history.changes) + 1}",
-                                change_type="modify",
-                                assertion=updated_assertions[index],
-                                original_assertion=original_assertion,
-                                assertion_index=index,
-                                user_request=user_input,
-                                description=f"Modified assertion {index + 1}: {new_content[:50]}..."
-                            )
-                            updated_change_history.add_change(change_record)
+                            # Only proceed if there's an actual change
+                            if original_content != new_content:
+                                # Store the change for the message BEFORE updating
+                                modification_changes.append({
+                                    'index': int(index_str),
+                                    'original': original_content,
+                                    'new': new_content
+                                })
+                                
+                                # Now update the assertion
+                                updated_assertions[index].content = new_content
+                                
+                                # Track the modification in change history
+                                change_record = ChangeRecord(
+                                    change_id=f"modify_{len(updated_change_history.changes) + 1}",
+                                    change_type="modify",
+                                    assertion=updated_assertions[index],
+                                    original_assertion=original_assertion,
+                                    assertion_index=index,
+                                    user_request=user_input,
+                                    description=f"Modified assertion {index + 1}: {new_content[:50]}..."
+                                )
+                                updated_change_history.add_change(change_record)
                     except (ValueError, IndexError):
                         continue
+                
+                # Create detailed message for modifications
+                if modification_changes:
+                    modify_message = f"I've made {len(modification_changes)} modification(s):\n\n"
+                    for change in modification_changes:
+                        modify_message += f"{change['index']}. Changed from:\n"
+                        modify_message += f"   \"{change['original']}\"\n\n"
+                        modify_message += f"   To:\n"
+                        modify_message += f"   \"{change['new']}\"\n\n"
+                    modify_message += f"Current total: {len(updated_assertions)} assertions"
+                else:
+                    modify_message = f"No changes were made - the content was already the same. Current total: {len(updated_assertions)} assertions"
                 
                 return {
                     "assertions": updated_assertions,
                     "change_history": updated_change_history,
                     "messages": state.messages + [
-                        AIMessage(content=f"I've updated the assertions as requested. You now have {len(updated_assertions)} assertions.")
+                        AIMessage(content=modify_message)
                     ]
                 }
             
