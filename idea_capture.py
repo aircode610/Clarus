@@ -238,10 +238,13 @@ CRITICAL RULES:
 1. If the user says "add" or "no add" followed by content, they want to ADD new assertions
 2. Only remove assertions if the user explicitly says "remove", "delete", "get rid of", "don't want", "take out"
 3. Be conservative with removals - only remove if the intent is clearly to remove
+4. Support both index-based removal (e.g., "remove 1, 3, 5") and content-based removal (e.g., "remove assertions about machine learning")
 
 Analyze the user's intent and determine:
 1. Do they want to accept all assertions as-is? (return "accept") - Look for: "yes", "good", "perfect", "keep them", "accept", "fine", "ok", "sounds good", "looks good", "that works", "i'm satisfied"
-2. Do they want to remove specific assertions? (return "remove" and list which ones by index) - ONLY if they explicitly say to remove/delete
+2. Do they want to remove specific assertions? (return "remove") - ONLY if they explicitly say to remove/delete
+   - If they specify indices/numbers: use "remove_indices" with 1-based indices
+   - If they specify content/keywords: use "remove_content" with keywords or phrases to match
 3. Do they want to add new assertions? (return "add" and provide the new assertions) - Look for: "add", "no add", "also", "and", "plus", or when they provide new content
 4. Do they want to modify existing assertions? (return "modify" and provide changes)
 5. Do they want to continue the conversation? (return "continue")
@@ -249,6 +252,9 @@ Analyze the user's intent and determine:
 EXAMPLES:
 - "no add this assertion" → intent: "add", new_assertions: ["this assertion"]
 - "remove the first one" → intent: "remove", remove_indices: [1]
+- "remove assertions 1, 3, 5" → intent: "remove", remove_indices: [1, 3, 5]
+- "remove assertions about machine learning" → intent: "remove", remove_content: ["machine learning"]
+- "remove the one about AI bias" → intent: "remove", remove_content: ["AI bias", "bias"]
 - "add nuclear power debate" → intent: "add", new_assertions: ["nuclear power debate"]
 - "that's good" → intent: "accept"
 
@@ -259,7 +265,8 @@ Return your analysis as JSON:
     "intent": "accept|remove|add|modify|continue",
     "action": "description of what to do",
     "new_assertions": ["list of new assertions if adding"],
-    "remove_indices": [list of 1-based indices to remove if removing],
+    "remove_indices": [list of 1-based indices to remove if removing by index],
+    "remove_content": ["list of keywords/phrases to match for content-based removal"],
     "modifications": {{"index": "new_content"}} if modifying
 }}"""),
             ("human", "Analyze this user feedback: {user_feedback}")
@@ -298,19 +305,31 @@ Return your analysis as JSON:
                 }
             
             elif intent == "remove":
-                # Remove specified assertions
+                # Handle both index-based and content-based removal
                 remove_indices = intent_data.get("remove_indices", [])
+                remove_content = intent_data.get("remove_content", [])
                 
-                # Convert 1-based indices to 0-based and filter valid indices
                 valid_remove_indices = []
-                for idx in remove_indices:
-                    try:
-                        # Convert to 0-based index
-                        zero_based_idx = int(idx) - 1
-                        if 0 <= zero_based_idx < len(state.assertions):
-                            valid_remove_indices.append(zero_based_idx)
-                    except (ValueError, TypeError):
-                        continue
+                
+                # Process index-based removal
+                if remove_indices:
+                    for idx in remove_indices:
+                        try:
+                            # Convert to 0-based index
+                            zero_based_idx = int(idx) - 1
+                            if 0 <= zero_based_idx < len(state.assertions):
+                                valid_remove_indices.append(zero_based_idx)
+                        except (ValueError, TypeError):
+                            continue
+                
+                # Process content-based removal
+                if remove_content:
+                    for i, assertion in enumerate(state.assertions):
+                        assertion_lower = assertion.content.lower()
+                        for keyword in remove_content:
+                            if keyword.lower() in assertion_lower:
+                                valid_remove_indices.append(i)
+                                break  # Don't add the same assertion multiple times
                 
                 # Remove duplicates and sort in reverse order to avoid index shifting issues
                 valid_remove_indices = sorted(list(set(valid_remove_indices)), reverse=True)
@@ -330,16 +349,27 @@ Return your analysis as JSON:
                             ]
                         }
                     
+                    # Get the content of removed assertions for the message
+                    removed_assertions = []
+                    for idx in sorted(valid_remove_indices):
+                        removed_assertions.append(state.assertions[idx].content)
+                    
+                    # Create simplified removal message
+                    removal_message = f"Removed {removed_count} assertion(s):\n"
+                    for i, content in enumerate(removed_assertions, 1):
+                        removal_message += f"{i}. {content}\n"
+                    removal_message += f"Remaining: {len(updated_assertions)} assertions"
+                    
                     return {
                         "assertions": updated_assertions,
                         "messages": state.messages + [
-                            AIMessage(content=f"I've removed {removed_count} assertion(s). You now have {len(updated_assertions)} assertions remaining.")
+                            AIMessage(content=removal_message)
                         ]
                     }
                 else:
                     return {
                         "messages": state.messages + [
-                            AIMessage(content="I couldn't identify which specific assertions you wanted to remove. Could you please specify the numbers of the assertions you'd like to remove?")
+                            AIMessage(content="I couldn't identify which specific assertions you wanted to remove. Could you please specify the numbers of the assertions you'd like to remove or describe the content you want to remove?")
                         ]
                     }
             
