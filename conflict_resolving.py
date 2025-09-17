@@ -5,13 +5,18 @@ import random
 from structure import Relationship
 
 class GlobalGraph:
-    """A helper to maintain global graphs of relationships and contrasts."""
+    """A helper to maintain global graphs of relationships and contradictions."""
     def __init__(self, relationships: List[Relationship]) -> None:
         """Initialize graphs from provided relationships."""
+        self.relationship_for_pair: dict[Tuple[str, str], Relationship] = {}
         self.relationships: List[Relationship] = relationships
-        self.graph, self.nodes = self.initialize_graph(relationships)
-        self.contrast_relations, self.other_relations = self.split_relationships_by_contrast(relationships)
-        self.contrast_graph = self.initialize_graph(self.contrast_relations)[0]
+        self.contradiction_relations, self.other_relations = self.split_relationships_by_contradiction(relationships)
+        self.graph, _ = self.initialize_graph(self.other_relations)
+        _, self.nodes = self.initialize_graph(self.relationships)
+        self.contradiction_graph, self.contradiction_nodes = self.initialize_graph(self.contradiction_relations)
+        self.reverse_graph: dict[str, set[str]] = {}
+        self.number_of_visited_parents: dict[str, int] = {}
+        self.ordered_graph: List[str] = []
 
     def initialize_graph(self, relationships: List[Relationship]) -> tuple[dict[str, set[str]], set[str]]:
         """Build adjacency map and node set from relationships."""
@@ -26,20 +31,20 @@ class GlobalGraph:
             nodes.add(v)
             graph.setdefault(u, set()).add(v)
             graph.setdefault(v, set())
-
+            self.relationship_for_pair[(u, v)] = rel
         return graph, nodes
 
 
-    def split_relationships_by_contrast(self, relationships: List[Relationship]) -> Tuple[list[Relationship], list[Relationship]]:
+    def split_relationships_by_contradiction(self, relationships: List[Relationship]) -> Tuple[list[Relationship], list[Relationship]]:
         """
         Split a list of Relationship objects into two lists:
-        - contrast_relations: relationships where relationship_type == "contrast"
+        - contradiction_relations: relationships where relationship_type == "contradiction"
         - other_relations: relationships with any other type
         """
         if not relationships:
             return [], []
 
-        contrast_relations: list[Relationship] = []
+        contradiction_relations: list[Relationship] = []
         other_relations: list[Relationship] = []
 
         for rel in relationships:
@@ -49,7 +54,7 @@ class GlobalGraph:
             else:
                 other_relations.append(rel)
 
-        return contrast_relations, other_relations
+        return contradiction_relations, other_relations
 
     def find_nodes_in_scc(self) -> list[list[str]]:
         """
@@ -107,7 +112,7 @@ class GlobalGraph:
         #TODO should send cycle to user and get user's decision node
         pass
     
-    def resolve_contrast_by_user(self, node: str) -> bool:
+    def resolve_contradiction_by_user(self, node: str) -> bool:
         #TODO should ask user if they want to delete it or its neighbors
         pass
 
@@ -121,12 +126,15 @@ class GlobalGraph:
         self.graph.pop(node, None)
         for other_node in self.graph:
             self.graph[other_node].discard(node)
-        self.contrast_graph.pop(node, None)
-        for other_node in self.contrast_graph:
-            self.contrast_graph[other_node].discard(node)
-        for relation in self.contrast_relations:
+        self.contradiction_graph.pop(node, None)
+        for other_node in self.contradiction_graph:
+            self.contradiction_graph[other_node].discard(node)
+        for relation in self.other_relations:
             if relation.assertion1_id == node or relation.assertion2_id == node:
-                self.contrast_relations.remove(relation)
+                self.other_relations.remove(relation)
+        for relation in self.contradiction_relations:
+            if relation.assertion1_id == node or relation.assertion2_id == node:
+                self.contradiction_relations.remove(relation)
         for relation in self.relationships:
             if relation.assertion1_id == node or relation.assertion2_id == node:
                 self.relationships.remove(relation)
@@ -138,18 +146,25 @@ class GlobalGraph:
         for node in self.nodes:
             if node not in nodes_part_of_scc:
                 continue
-            if node not in self.contrast_graph:
+            if node not in self.contradiction_graph:
                 continue
             score = len(self.graph[node]) - len(self.contradiction_graph[node])
             if score < min_score:
                 min_score = score
                 min_node = node
+
+        if min_node is None:
+            for node in self.contradiction_nodes:
+                score = len(self.graph[node]) - len(self.contradiction_graph[node])
+                if score < min_score:
+                    min_score = score
+                    min_node = node
         return min_node
 
     def resolve_cycles_and_conflicts(self) -> None:
-        """Resolve cycles using contrast penalty heuristics (placeholder).
+        """Resolve cycles using contradiction penalty heuristics (placeholder).
         
-        Currently computes a simple score per node inside SCCs (out_degree - 2*contrast_out)
+        Currently computes a simple score per node inside SCCs (out_degree - contradiction_out)
         and would select a candidate node to act upon. The concrete mutation of the
         graph/relations is not implemented yet.
         """
@@ -159,11 +174,11 @@ class GlobalGraph:
         list_of_scc = self.find_nodes_in_scc()
         nodes_part_of_scc = [node for sublist in list_of_scc for node in sublist]
 
-        while len(nodes_part_of_scc) > 0 and len(self.contrast_relations) > 0:
+        while len(nodes_part_of_scc) > 0 and len(self.contradiction_relations) > 0:
 
             min_node = self.pick_worst_node(nodes_part_of_scc)
 
-            if self.contrast_graph is None:
+            if self.contradiction_graph is None:
                 if automatic:
                     remove_nodes = set(random.choice(nodes_part_of_scc))
                 else:
@@ -172,10 +187,10 @@ class GlobalGraph:
                 if automatic:
                     remove_nodes = set(min_node)
                 else:
-                    if self.resolve_contrast_by_user(min_node):
+                    if self.resolve_contradiction_by_user(min_node):
                         remove_nodes = set(min_node)
                     else:
-                        remove_nodes = set(self.contrast_graph[min_node])
+                        remove_nodes = set(self.contradiction_graph[min_node])
 
             for node in remove_nodes:
                 self.remove_node(node)
