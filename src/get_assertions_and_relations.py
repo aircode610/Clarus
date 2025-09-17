@@ -10,7 +10,7 @@ from transformers import TextStreamer
 
 from typing import List
 
-os.environ["GRAZIE_JWT_TOKEN"] = ""
+# os.environ["GRAZIE_JWT_TOKEN"] = ""
 
 from grazie.api.client.endpoints import GrazieApiGatewayUrls
 from grazie.api.client.gateway import GrazieApiGatewayClient, GrazieAgent, AuthType
@@ -20,7 +20,6 @@ from grazie.api.client.v8.llm_parameters import LLMParameters
 from grazie.api.client.v8.parameters import Parameters
 
 from utils.relation_prompts import relation2demo
-#print(", ".join(list(relation2demo.keys())))
 
 ASSERTION_PROMPT_FOR_GRAZIE_API_MODELS = "Your task is to segment the text into assertions, each standing as a separate claim."
 RELATION_PROMPT_FOR_GRAZIE_API_MODELS = "Your task is to annotate claims with the relations from the Rhetorical Structure Theory."
@@ -91,7 +90,7 @@ def extract_relations(relations, assertions):
     return output_relations
 
 
-def generate_assertions_and_relations(task: str, input_data_path: str, output_data_path: str, model_name_or_path: str = "unsloth/Qwen3-14B-unsloth-bnb-4bit"):
+def generate_assertions_and_relations(task: str, input_data_path: str, output_data_path: str, model_name_or_path: str, debug: bool):
     output_annotations = []
     ids = []
 
@@ -128,6 +127,8 @@ def generate_assertions_and_relations(task: str, input_data_path: str, output_da
 
     # Reading the data
     df = pd.read_json(input_data_path, lines=True)
+    if debug:
+        df = df[:3]
     for record in df.iterrows():
         record = record[1]
         if task == "assertions":
@@ -202,16 +203,16 @@ def generate_assertions_and_relations(task: str, input_data_path: str, output_da
         output_df = pd.DataFrame(relations_with_ids)
         output_df.to_json(output_data_path, orient="records", lines=True) # orient="index", indent=2)
 
-    print(f"Finished! The outputs are stored in {output_path}")
+    print(f"Finished! The outputs are stored in {output_data_path}")
 
-# generate assertions
-task = "relations"
-if task == "assertions":
-    input_data_path = "data/selected_paper_abstracts.jsonl"
-    output_data_path = "data/generated_assertions.jsonl"
-else:
-    input_data_path = "data/generated_assertions.jsonl"
-    output_data_path = "data/generated_relations.jsonl"
 
-model_name_or_path = "unsloth/Qwen3-14B-unsloth-bnb-4bit" # "openai-gpt-4o"
-generate_assertions_and_relations(task, input_data_path, output_data_path, model_name_or_path)#"unsloth/Qwen3-14B-unsloth-bnb-4bit")
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--task", type=str, choices=["assertions", "relations"], default="assertions")
+    parser.add_argument("--model_name_or_path", type=str, default="openai-gpt-4o") # "unsloth/Qwen3-14B-unsloth-bnb-4bit"
+    parser.add_argument("--input_data_path", type=str, default="data/selected_paper_abstracts.jsonl")
+    parser.add_argument("--output_data_path", type=str, default="data/generated_assertions.jsonl")
+    parser.add_argument("--debug", action="store_true")
+    args = parser.parse_args()
+
+    generate_assertions_and_relations(args.task, args.input_data_path, args.output_data_path, args.model_name_or_path, args.debug)
