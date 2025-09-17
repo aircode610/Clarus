@@ -141,7 +141,9 @@ class StructureWorkflow:
         builder.add_node("analyze_cause", self._analyze_cause_node)
         builder.add_node("analyze_contrast", self._analyze_contrast_node)
         builder.add_node("analyze_condition", self._analyze_condition_node)
+        builder.add_node("analyze_contradiction", self._analyze_contradiction_node)
         builder.add_node("merge_relationships", self._merge_relationships_node)
+        builder.add_node("evaluate_relationships", self._evaluate_relationships_node)
         builder.add_node("present_structure", self._present_structure_node)
         builder.add_node("summarize_structure", self._summarize_structure_node)
         
@@ -151,6 +153,7 @@ class StructureWorkflow:
         builder.add_edge(START, "analyze_cause")
         builder.add_edge(START, "analyze_contrast")
         builder.add_edge(START, "analyze_condition")
+        builder.add_edge(START, "analyze_contradiction")
         
         # All parallel nodes feed into merge
         builder.add_edge("analyze_evidence", "merge_relationships")
@@ -158,9 +161,11 @@ class StructureWorkflow:
         builder.add_edge("analyze_cause", "merge_relationships")
         builder.add_edge("analyze_contrast", "merge_relationships")
         builder.add_edge("analyze_condition", "merge_relationships")
+        builder.add_edge("analyze_contradiction", "merge_relationships")
         
-        # Merge feeds into presentation
-        builder.add_edge("merge_relationships", "present_structure")
+        # Merge feeds into evaluation, then presentation
+        builder.add_edge("merge_relationships", "evaluate_relationships")
+        builder.add_edge("evaluate_relationships", "present_structure")
         builder.add_edge("present_structure", "summarize_structure")
         builder.add_edge("summarize_structure", END)
         
@@ -183,12 +188,16 @@ class StructureWorkflow:
                 "examples": "A causes B, A leads to B, A results in B, A is the reason for B, A contributes to B, A triggers B"
             },
             "contrast": {
-                "description": "Contrast relationships where assertions present opposing, contradictory, contrasting, or different viewpoints",
-                "examples": "A contrasts with B, A contradicts B, A opposes B, A is different from B, A conflicts with B"
+                "description": "Contrast relationships where assertions present different viewpoints, perspectives, or approaches (not contradictory)",
+                "examples": "A contrasts with B, A differs from B, A presents alternative to B, A shows different approach than B"
             },
             "condition": {
                 "description": "Condition relationships where one assertion is a prerequisite, condition, requirement, or enabling factor for another",
                 "examples": "A is a condition for B, A is required for B, A must happen before B, A enables B, A determines B"
+            },
+            "contradiction": {
+                "description": "Contradiction relationships where assertions directly contradict, negate, or are mutually exclusive with each other",
+                "examples": "A contradicts B, A negates B, A is mutually exclusive with B, A directly opposes B's claim"
             }
         }
         
@@ -251,6 +260,10 @@ If no {relationship_type} relationships are found, return an empty array: []""")
     def _analyze_condition_node(self, state: StructureState) -> Dict[str, Any]:
         """Analyze condition relationships between assertions."""
         return self._analyze_relationships(state, "condition")
+    
+    def _analyze_contradiction_node(self, state: StructureState) -> Dict[str, Any]:
+        """Analyze contradiction relationships between assertions."""
+        return self._analyze_relationships(state, "contradiction")
     
     def _analyze_relationships(self, state: StructureState, relationship_type: str) -> Dict[str, Any]:
         """Generic method to analyze relationships of a specific type."""
@@ -338,6 +351,7 @@ If no {relationship_type} relationships are found, return an empty array: []""")
         all_relationships.extend(state.cause_relationships)
         all_relationships.extend(state.contrast_relationships)
         all_relationships.extend(state.condition_relationships)
+        all_relationships.extend(state.contradiction_relationships)
         
         if not all_relationships:
             return {
@@ -421,7 +435,7 @@ Consider:
 IMPORTANT: Return ONLY a valid JSON object. Do not include any other text.
 
 Return your choice as JSON with these fields:
-- chosen_relationship: one of "evidence", "background", "cause", "contrast", or "condition"
+- chosen_relationship: one of "evidence", "background", "cause", "contrast", "condition", or "contradiction"
 - confidence: number between 0 and 1
 - explanation: brief explanation of why this relationship type is best"""),
                 ("human", """Assertion 1 (ID: {assertion1_id}): {assertion1_content}
@@ -492,9 +506,93 @@ Choose the best relationship type for this pair.""")
         
         return resolved_relationships
     
+    def _evaluate_relationships_node(self, state: StructureState) -> Dict[str, Any]:
+        """Evaluate all relationships and filter based on quality assessment."""
+        if not state.final_relationships:
+            return {
+                "evaluated_relationships": [],
+                "messages": state.messages + [
+                    AIMessage(content="No relationships to evaluate.")
+                ]
+            }
+        
+        # Create assertions lookup for evaluation
+        assertions_dict = {a.id: a for a in state.assertions}
+        
+        evaluated_relationships = []
+        evaluation_results = []
+        
+        for rel in state.final_relationships:
+            assertion1 = assertions_dict.get(rel.assertion1_id)
+            assertion2 = assertions_dict.get(rel.assertion2_id)
+            
+            if not assertion1 or not assertion2:
+                continue
+            
+            # Evaluate the relationship quality
+            confidence, reason, suggestion = evaluate_relationship_quality(
+                assertion1.content,
+                assertion2.content,
+                rel.relationship_type
+            )
+            
+            evaluation_results.append({
+                "relationship": rel,
+                "confidence": confidence,
+                "reason": reason,
+                "suggestion": suggestion
+            })
+            
+            # Decide whether to keep the relationship based on evaluation
+            if suggestion == "ADD" or (suggestion.startswith("MODIFY") and confidence >= 60):
+                # Keep the relationship, potentially with modification
+                if suggestion.startswith("MODIFY to "):
+                    # Extract the suggested relationship type
+                    suggested_type = suggestion.replace("MODIFY to ", "").strip()
+                    if suggested_type in ["evidence", "background", "cause", "contrast", "condition", "contradiction"]:
+                        # Update the relationship type
+                        updated_rel = Relationship(
+                            assertion1_id=rel.assertion1_id,
+                            assertion2_id=rel.assertion2_id,
+                            relationship_type=suggested_type,
+                            confidence=confidence / 100.0,  # Convert to 0-1 scale
+                            explanation=f"Modified from {rel.relationship_type}: {reason}"
+                        )
+                        evaluated_relationships.append(updated_rel)
+                    else:
+                        # Keep original if suggested type is invalid
+                        evaluated_relationships.append(rel)
+                else:
+                    # Keep as is
+                    evaluated_relationships.append(rel)
+            elif suggestion == "REMOVE" or confidence < 50:
+                # Remove the relationship
+                continue
+            else:
+                # Keep with lower confidence
+                updated_rel = Relationship(
+                    assertion1_id=rel.assertion1_id,
+                    assertion2_id=rel.assertion2_id,
+                    relationship_type=rel.relationship_type,
+                    confidence=confidence / 100.0,
+                    explanation=f"Evaluated: {reason}"
+                )
+                evaluated_relationships.append(updated_rel)
+        
+        # Create evaluation summary
+        kept_count = len(evaluated_relationships)
+        removed_count = len(state.final_relationships) - kept_count
+        
+        evaluation_message = f"Evaluated {len(state.final_relationships)} relationships. Kept {kept_count} high-quality relationships and removed {removed_count} low-quality ones."
+        
+        return {
+            "evaluated_relationships": evaluated_relationships,
+            "messages": state.messages + [AIMessage(content=evaluation_message)]
+        }
+    
     def _present_structure_node(self, state: StructureState) -> Dict[str, Any]:
         """Present the structured relationships to the user."""
-        if not state.final_relationships:
+        if not state.evaluated_relationships:
             return {
                 "messages": state.messages + [
                     AIMessage(content="I didn't find any clear relationships between your assertions. This might mean they are independent ideas or the relationships are too subtle to detect automatically.")
@@ -503,7 +601,7 @@ Choose the best relationship type for this pair.""")
         
         # Group relationships by type
         relationships_by_type = {}
-        for rel in state.final_relationships:
+        for rel in state.evaluated_relationships:
             if rel.relationship_type not in relationships_by_type:
                 relationships_by_type[rel.relationship_type] = []
             relationships_by_type[rel.relationship_type].append(rel)
@@ -533,15 +631,15 @@ Choose the best relationship type for this pair.""")
     
     def _summarize_structure_node(self, state: StructureState) -> Dict[str, Any]:
         """Summarize the structure analysis."""
-        if not state.final_relationships:
+        if not state.evaluated_relationships:
             summary = "No relationships were found between the assertions."
         else:
             # Count relationships by type
             rel_counts = {}
-            for rel in state.final_relationships:
+            for rel in state.evaluated_relationships:
                 rel_counts[rel.relationship_type] = rel_counts.get(rel.relationship_type, 0) + 1
             
-            summary_parts = [f"Found {len(state.final_relationships)} total relationships:"]
+            summary_parts = [f"Found {len(state.evaluated_relationships)} high-quality relationships:"]
             for rel_type, count in rel_counts.items():
                 summary_parts.append(f"- {count} {rel_type} relationships")
             
@@ -600,7 +698,9 @@ def create_structure_graph(config: dict = None):
     builder.add_node("analyze_cause", workflow._analyze_cause_node)
     builder.add_node("analyze_contrast", workflow._analyze_contrast_node)
     builder.add_node("analyze_condition", workflow._analyze_condition_node)
+    builder.add_node("analyze_contradiction", workflow._analyze_contradiction_node)
     builder.add_node("merge_relationships", workflow._merge_relationships_node)
+    builder.add_node("evaluate_relationships", workflow._evaluate_relationships_node)
     builder.add_node("present_structure", workflow._present_structure_node)
     builder.add_node("summarize_structure", workflow._summarize_structure_node)
     
@@ -610,6 +710,7 @@ def create_structure_graph(config: dict = None):
     builder.add_edge(START, "analyze_cause")
     builder.add_edge(START, "analyze_contrast")
     builder.add_edge(START, "analyze_condition")
+    builder.add_edge(START, "analyze_contradiction")
     
     # All parallel nodes feed into merge
     builder.add_edge("analyze_evidence", "merge_relationships")
@@ -617,9 +718,11 @@ def create_structure_graph(config: dict = None):
     builder.add_edge("analyze_cause", "merge_relationships")
     builder.add_edge("analyze_contrast", "merge_relationships")
     builder.add_edge("analyze_condition", "merge_relationships")
+    builder.add_edge("analyze_contradiction", "merge_relationships")
     
-    # Merge feeds into presentation
-    builder.add_edge("merge_relationships", "present_structure")
+    # Merge feeds into evaluation, then presentation
+    builder.add_edge("merge_relationships", "evaluate_relationships")
+    builder.add_edge("evaluate_relationships", "present_structure")
     builder.add_edge("present_structure", "summarize_structure")
     builder.add_edge("summarize_structure", END)
     

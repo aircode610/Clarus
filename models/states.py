@@ -74,6 +74,8 @@ class StructureState(BaseModel):
     cause_relationships: List[Relationship] = Field(default_factory=list)
     contrast_relationships: List[Relationship] = Field(default_factory=list)
     condition_relationships: List[Relationship] = Field(default_factory=list)
+    contradiction_relationships: List[Relationship] = Field(default_factory=list)
     final_relationships: List[Relationship] = Field(default_factory=list)
+    evaluated_relationships: List[Relationship] = Field(default_factory=list)
     current_input: str = Field(default="")
     chat_summary: str = Field(default="")

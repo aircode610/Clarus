@@ -221,10 +221,10 @@ def structure_tab():
                 
                 result = st.session_state.clarus_app.start_structure_analysis()
                 
-                if "final_relationships" in result:
-                    st.session_state.relationships = result["final_relationships"]
+                if "evaluated_relationships" in result:
+                    st.session_state.relationships = result["evaluated_relationships"]
                     st.session_state.structure_analysis_done = True
-                    st.success(f"✅ Relationship analysis complete! Found {len(result['final_relationships'])} relationships.")
+                    st.success(f"✅ Relationship analysis complete! Found {len(result['evaluated_relationships'])} relationships.")
                 else:
                     st.warning("No relationships found between assertions.")
             except Exception as e:
@@ -332,8 +332,9 @@ def structure_tab():
         "evidence": "#32CD32",      # Lime Green
         "background": "#00CED1",    # Dark Turquoise  
         "cause": "#1E90FF",         # Dodger Blue
-        "contrast": "#FF4444",      # Bright Red
-        "condition": "#FFD700"      # Gold
+        "contrast": "#FF8C00",      # Orange
+        "condition": "#FFD700",     # Gold
+        "contradiction": "#FF4444"  # Red
     }
     
     # Add edges for filtered relationships only
@@ -387,20 +388,22 @@ def structure_tab():
                 
                 edge_hover_text.append(hover_text)
         
-        if edge_x:  # Only create trace if there are edges of this type
-            # Create the visible line trace
-            edge_trace = go.Scatter(
-                x=edge_x, y=edge_y,
-                line=dict(width=3, color=color),
-                hoverinfo='text',
-                hovertext=edge_hover_text,
-                mode='lines',
-                name=rel_type.title(),
-                showlegend=True,
-                legendgroup=rel_type
-            )
-            edge_traces.append(edge_trace)
+        # Always create trace for legend, even if no edges of this type exist
+        # Create the visible line trace
+        edge_trace = go.Scatter(
+            x=edge_x, y=edge_y,
+            line=dict(width=3, color=color),
+            hoverinfo='text',
+            hovertext=edge_hover_text,
+            mode='lines',
+            name=rel_type.title(),
+            showlegend=True,
+            legendgroup=rel_type
+        )
+        edge_traces.append(edge_trace)
             
+        # Only create clickable trace if there are actual edges of this type
+        if edge_x:
             # Create invisible clickable points along the edges
             clickable_x = []
             clickable_y = []
@@ -637,13 +640,14 @@ def structure_tab():
             )
             
             # Relationship type selector
-            relationship_types = ["evidence", "background", "cause", "contrast", "condition"]
+            relationship_types = ["evidence", "background", "cause", "contrast", "condition", "contradiction"]
             relationship_labels = {
                 "evidence": "Evidence - One assertion provides evidence/examples for another",
                 "background": "Background - One assertion provides context/setting for another", 
                 "cause": "Cause - One assertion causes/leads to another",
-                "contrast": "Contrast - Assertions present opposing viewpoints",
-                "condition": "Condition - One assertion is a prerequisite for another"
+                "contrast": "Contrast - Assertions present different viewpoints/approaches",
+                "condition": "Condition - One assertion is a prerequisite for another",
+                "contradiction": "Contradiction - Assertions directly contradict/negate each other"
             }
             relationship_options = {rt: relationship_labels[rt] for rt in relationship_types}
             
@@ -785,7 +789,8 @@ def structure_tab():
                         "background": "provides background for", 
                         "cause": "causes",
                         "contrast": "contrasts with",
-                        "condition": "is a condition for"
+                        "condition": "is a condition for",
+                        "contradiction": "contradicts"
                     }
                     
                     verb = relationship_verbs.get(selected_relationship, selected_relationship)
