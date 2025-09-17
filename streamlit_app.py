@@ -953,19 +953,19 @@ def review_tab():
                 for id in st.session_state.ordered_graph:
                     satellite = False
                     nucleus = False
-                    for rel in st.session_state.relationships:
+                    for rel in st.session_state.global_graph.relationships:
                         if rel.assertion1_id == id:
                             satellite = True
                         if rel.assertion2_id == id:
                             nucleus = True
-                            st.session_state.result_text += (f"The following assertions: \"{assertion_dictionary[rel.assertion1_id]}\" is a "
+                            st.session_state.result_text += (f"The following assertion: \"{assertion_dictionary[rel.assertion1_id]}\" is a "
                                                              f"{rel.relationship_type} for this assertion: \"{assertion_dictionary[id]}\"\n")
                     if not nucleus and not satellite:
                         st.session_state.result_text += f"The assertion: \"{assertion_dictionary[id]}\" is a separate idea\n"
             st.text_area("Graph has been ordered", key="result_text")
 
-            for rel in st.session_state.global_graph.relationships:
-                st.write(rel.assertion1_id, rel.relationship_type, rel.assertion2_id)
+            # for rel in st.session_state.global_graph.relationships:
+            #     st.write(rel.assertion1_id, rel.relationship_type, rel.assertion2_id)
         elif st.session_state.automatic_method:
             st.rerun()
     else:
