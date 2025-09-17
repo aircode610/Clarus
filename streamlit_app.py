@@ -246,6 +246,12 @@ def structure_tab():
     with col1:
         st.markdown("**View Options**")
         show_labels = st.checkbox("Show assertion content", value=False)
+    
+    with col2:
+        st.markdown("**Filter Relationships**")
+        filter_type = st.selectbox("Filter by relationship type:", 
+                                 ["All"] + list(set(rel.relationship_type for rel in st.session_state.relationships)),
+                                 key="graph_filter")
         
         # Assertion filter for graph
         assertion_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
@@ -259,12 +265,6 @@ def structure_tab():
             key="graph_assertion_filter",
             help="Select assertion to display in the graph"
         )
-    
-    with col2:
-        st.markdown("**Filter Relationships**")
-        filter_type = st.selectbox("Filter by relationship type:", 
-                                 ["All"] + list(set(rel.relationship_type for rel in st.session_state.relationships)),
-                                 key="graph_filter")
     
     with col3:
         st.markdown("**Layout Options**")
