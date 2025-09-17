@@ -256,6 +256,15 @@ def structure_tab():
         with col3:
             st.markdown("**Layout Options**")
             layout_type = st.selectbox("Graph layout:", ["Spring", "Circular", "Hierarchical"], key="graph_layout")
+            
+        # Add interaction mode selector
+        st.markdown("**Interaction Mode**")
+        interaction_mode = st.radio(
+            "Graph interaction:",
+            ["Select Mode (Click edges to jump to details)", "Pan Mode (Drag to move graph)"],
+            key="interaction_mode",
+            horizontal=True
+        )
         
         # Create the graph data structure
         import networkx as nx
@@ -340,6 +349,7 @@ def structure_tab():
                     edge_hover_text.append(hover_text)
             
             if edge_x:  # Only create trace if there are edges of this type
+                # Create the visible line trace
                 edge_trace = go.Scatter(
                     x=edge_x, y=edge_y,
                     line=dict(width=3, color=color),
@@ -351,6 +361,54 @@ def structure_tab():
                     legendgroup=rel_type
                 )
                 edge_traces.append(edge_trace)
+                
+                # Create invisible clickable points along the edges
+                clickable_x = []
+                clickable_y = []
+                clickable_hover = []
+                clickable_customdata = []
+                
+                for edge in G.edges():
+                    edge_data = G[edge[0]][edge[1]]
+                    if edge_data.get('relationship_type') == rel_type:
+                        # Get edge coordinates
+                        x0, y0 = pos[edge[0]]
+                        x1, y1 = pos[edge[1]]
+                        
+                        # Create clickable points along the edge (start, middle, end)
+                        clickable_x.extend([x0, (x0 + x1) / 2, x1])
+                        clickable_y.extend([y0, (y0 + y1) / 2, y1])
+                        
+                        # Get assertion data for hover
+                        assertion1_data = G.nodes[edge[0]]
+                        assertion2_data = G.nodes[edge[1]]
+                        confidence = edge_data.get('confidence', 0)
+                        explanation = edge_data.get('explanation', '')
+                        
+                        hover_text = f"<b>{rel_type.upper()}</b><br>"
+                        hover_text += f"<b>From:</b> Assertion {assertion1_data['assertion_num']}<br>"
+                        hover_text += f"<b>To:</b> Assertion {assertion2_data['assertion_num']}<br>"
+                        hover_text += f"<b>Explanation:</b> {explanation}"
+                        
+                        clickable_hover.extend([hover_text, hover_text, hover_text])
+                        clickable_customdata.extend([
+                            [edge[0], edge[1], rel_type],
+                            [edge[0], edge[1], rel_type],
+                            [edge[0], edge[1], rel_type]
+                        ])
+                
+                # Create invisible clickable trace
+                clickable_trace = go.Scatter(
+                    x=clickable_x, y=clickable_y,
+                    mode='markers',
+                    marker=dict(size=20, color='rgba(0,0,0,0)', line=dict(width=0)),
+                    hoverinfo='text',
+                    hovertext=clickable_hover,
+                    customdata=clickable_customdata,
+                    showlegend=False,
+                    legendgroup=rel_type
+                )
+                edge_traces.append(clickable_trace)
         
         # Create node trace
         node_x = []
@@ -411,9 +469,10 @@ def structure_tab():
                            ),
                            showlegend=True,
                            hovermode='closest',
+                           dragmode='select' if "Select Mode" in interaction_mode else 'pan',  # Dynamic drag mode
                            margin=dict(b=20,l=5,r=5,t=40),
                            annotations=[ dict(
-                               text="Hover over nodes and edges for detailed information",
+                               text="Hover for details" + (" • Click edges to jump to relationship details" if "Select Mode" in interaction_mode else " • Switch to Select Mode to click edges"),
                                showarrow=False,
                                xref="paper", yref="paper",
                                x=0.005, y=-0.002,
@@ -433,8 +492,33 @@ def structure_tab():
                            )
                        ))
         
-        # Display the graph
-        st.plotly_chart(fig, use_container_width=True)
+        # Display the graph with click events
+        selected_data = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode=["points"])
+        
+        # Handle edge clicks to jump to relationship details
+        if selected_data and 'selection' in selected_data and selected_data['selection']['points']:
+            clicked_points = selected_data['selection']['points']
+            if clicked_points:
+                # Get the clicked point data
+                point_data = clicked_points[0]
+                
+                # Debug: show what was clicked
+                st.write("Debug - Clicked point data:", point_data)
+                
+                if 'customdata' in point_data and point_data['customdata']:
+                    # This is an edge click
+                    edge_info = point_data['customdata']
+                    st.write("Debug - Edge info:", edge_info)
+                    
+                    if len(edge_info) >= 2:
+                        assertion1_id, assertion2_id = edge_info[0], edge_info[1]
+                        # Find the relationship and scroll to it
+                        for i, rel in enumerate(display_relationships):
+                            if (rel.assertion1_id == assertion1_id and rel.assertion2_id == assertion2_id) or \
+                               (rel.assertion1_id == assertion2_id and rel.assertion2_id == assertion1_id):
+                                st.session_state['scroll_to_relationship'] = i
+                                st.rerun()
+                                break
         
         # Detailed relationship information
         st.markdown("---")
@@ -452,7 +536,20 @@ def structure_tab():
                 assertion1_num = st.session_state.assertions.index(assertion1) + 1
                 assertion2_num = st.session_state.assertions.index(assertion2) + 1
                 
-                st.markdown(f"### Relationship {i + 1}")
+                # Check if this relationship should be highlighted
+                is_highlighted = st.session_state.get('scroll_to_relationship') == i
+                
+                if is_highlighted:
+                    st.markdown(f"### 🎯 Relationship {i + 1} (Selected from Graph)")
+                    # Clear the scroll flag after highlighting
+                    if 'scroll_to_relationship' in st.session_state:
+                        del st.session_state['scroll_to_relationship']
+                    # Add visual highlight
+                    st.markdown("""
+                    <div style="background-color: rgba(255, 215, 0, 0.2); padding: 10px; border-radius: 5px; border-left: 4px solid #FFD700;">
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"### Relationship {i + 1}")
                 
                 # Create columns for the relationship editor
                 col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
@@ -543,6 +640,10 @@ def structure_tab():
                         rel.explanation = f"{selected_relationship} relationship between assertions"
                         
                         st.rerun()
+                
+                # Close the highlight div if this relationship was highlighted
+                if is_highlighted:
+                    st.markdown("</div>", unsafe_allow_html=True)
                 
                 st.markdown("---")
         
