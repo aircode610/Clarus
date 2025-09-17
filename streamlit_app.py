@@ -8,6 +8,8 @@ Features Idea Capture, Structure, Review, and Prose modes.
 import streamlit as st
 import json
 from typing import List, Dict, Any
+
+import streamlit_voice
 from models import Assertion
 from app import ClarusApp, create_clarus_app
 from structure import evaluate_relationship_quality
@@ -114,8 +116,23 @@ def idea_capture_tab():
                     st.markdown(message["content"])
         
         # Chat input
-        if prompt := st.chat_input("Share your ideas, thoughts, or feedback..."):
+        if "transcript" not in st.session_state or st.session_state.transcript is None:
+            st.session_state.transcript = ""
+
+        if st.session_state.get("message_sent", False):
+            st.session_state.transcript = ""
+            st.session_state.message_sent = False
+
+        streamlit_voice.whisper_voice_to_text(
+            start_prompt="🎤 Voice Input",
+            stop_prompt="🛑 Stop Recording",
+        )
+        # st.text_area("text", label_visibility="collapsed", key="transcript", height=200)
+        # st.chat_input("Your thoughts and ideas", key="transcript")
+
+        if prompt := st.chat_input("Your thoughts and ideas", key="transcript"):
             # Add user message to chat
+            st.session_state.message_sent = True
             st.session_state.messages.append({"role": "user", "content": prompt})
             
             # Display user message
