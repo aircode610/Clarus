@@ -5,6 +5,11 @@ A multi-tab interface for the Clarus document structuring system.
 Features Idea Capture, Structure, Review, and Prose modes.
 """
 
+import warnings
+# Suppress pkg_resources deprecation warnings from ctranslate2/faster-whisper
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+warnings.filterwarnings("ignore", category=UserWarning, module="ctranslate2")
+
 import streamlit as st
 import json
 from typing import List, Dict, Any

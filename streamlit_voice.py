@@ -1,3 +1,8 @@
+import warnings
+# Suppress pkg_resources deprecation warnings from ctranslate2/faster-whisper
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+warnings.filterwarnings("ignore", category=UserWarning, module="ctranslate2")
+
 import os
 import io
 import zipfile
@@ -106,7 +111,7 @@ def whisper_voice_to_text(
     insert_newline=True,
     auto_punct=True,        # unused; Whisper already handles punctuation
     model_size="small",
-    device="auto",
+    device="cpu",           # Force CPU to avoid CUDA/cuDNN issues
     compute_type="int8",
     beam_size=5,
     vad_filter=True,
