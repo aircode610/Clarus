@@ -246,6 +246,19 @@ def structure_tab():
     with col1:
         st.markdown("**View Options**")
         show_labels = st.checkbox("Show assertion content", value=False)
+        
+        # Assertion filter for graph
+        assertion_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
+                           for a in st.session_state.assertions}
+        assertion_filter_options = ["All"] + list(assertion_options.keys())
+        selected_assertions_for_graph = st.selectbox(
+            "Show only this assertion",
+            options=assertion_filter_options,
+            format_func=lambda x: "All" if x == "All" else assertion_options[x],
+            index=0,
+            key="graph_assertion_filter",
+            help="Select assertion to display in the graph"
+        )
     
     with col2:
         st.markdown("**Filter Relationships**")
@@ -274,19 +287,44 @@ def structure_tab():
     # Create a directed graph
     G = nx.DiGraph()
     
-    # Add nodes (assertions)
+    # Add nodes (assertions) - filter based on user selection
+    assertions_to_show = st.session_state.assertions
+    if selected_assertions_for_graph != "All":
+        # Find all assertions that are involved in relationships with the selected assertion
+        related_assertion_ids = set()
+        related_assertion_ids.add(selected_assertions_for_graph)
+        
+        # Add all assertions that have relationships with the selected assertion
+        for rel in st.session_state.relationships:
+            if rel.assertion1_id == selected_assertions_for_graph:
+                related_assertion_ids.add(rel.assertion2_id)
+            elif rel.assertion2_id == selected_assertions_for_graph:
+                related_assertion_ids.add(rel.assertion1_id)
+        
+        assertions_to_show = [a for a in st.session_state.assertions if a.id in related_assertion_ids]
+    
     for i, assertion in enumerate(st.session_state.assertions):
-        G.add_node(assertion.id, 
-                  label=f"Assertion {i+1}",
-                  content=assertion.content,
-                  assertion_num=i+1,
-                  confidence=assertion.confidence,
-                  source=assertion.source        )
+        # Only add node if it's in the filtered list
+        if assertion.id in [a.id for a in assertions_to_show]:
+            G.add_node(assertion.id, 
+                      label=f"Assertion {i+1}",
+                      content=assertion.content,
+                      assertion_num=i+1,
+                      confidence=assertion.confidence,
+                      source=assertion.source        )
     
     # Filter relationships based on user selection
     filtered_relationships = st.session_state.relationships
     if filter_type != "All":
         filtered_relationships = [rel for rel in st.session_state.relationships if rel.relationship_type == filter_type]
+    
+    # Further filter relationships based on assertion filter
+    if selected_assertions_for_graph != "All":
+        # Show all relationships between the filtered assertions
+        filtered_assertion_ids = [a.id for a in assertions_to_show]
+        filtered_relationships = [rel for rel in filtered_relationships 
+                                if rel.assertion1_id in filtered_assertion_ids 
+                                and rel.assertion2_id in filtered_assertion_ids]
     
     # Add edges (relationships) with colors based on type - high contrast colors
     relationship_colors = {
@@ -693,48 +731,149 @@ def structure_tab():
     st.subheader("📋 All Relationships")
     
     if st.session_state.relationships:
+        # Add filters
+        st.markdown("#### Filters")
+        filter_col1, filter_col2 = st.columns(2)
+        
+        with filter_col1:
+            # Relationship type filter
+            relationship_types = ["All", "evidence", "background", "cause", "contrast", "condition"]
+            selected_relationship_filter = st.selectbox(
+                "Filter by Relationship Type",
+                options=relationship_types,
+                index=0,
+                key="relationship_type_filter",
+                help="Select relationship type to display"
+            )
+        
+        with filter_col2:
+            # Assertion filter
+            assertion_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
+                               for a in st.session_state.assertions}
+            assertion_filter_options = ["All"] + list(assertion_options.keys())
+            selected_assertion_filter = st.selectbox(
+                "Filter by Assertion",
+                options=assertion_filter_options,
+                format_func=lambda x: "All" if x == "All" else assertion_options[x],
+                index=0,
+                key="assertion_filter",
+                help="Select assertion to include in relationships"
+            )
+        
+        # Filter relationships based on selected filters
+        filtered_relationships = []
         for i, rel in enumerate(st.session_state.relationships):
-            assertion1 = assertions_dict.get(rel.assertion1_id)
-            assertion2 = assertions_dict.get(rel.assertion2_id)
+            # Check relationship type filter
+            if selected_relationship_filter != "All" and rel.relationship_type != selected_relationship_filter:
+                continue
             
-            if assertion1 and assertion2:
-                assertion1_num = st.session_state.assertions.index(assertion1) + 1
-                assertion2_num = st.session_state.assertions.index(assertion2) + 1
+            # Check assertion filter
+            if selected_assertion_filter != "All":
+                if rel.assertion1_id != selected_assertion_filter and rel.assertion2_id != selected_assertion_filter:
+                    continue
+            
+            filtered_relationships.append((i, rel))
+        
+        if filtered_relationships:
+            for list_idx, (rel_idx, rel) in enumerate(filtered_relationships):
+                assertion1 = assertions_dict.get(rel.assertion1_id)
+                assertion2 = assertions_dict.get(rel.assertion2_id)
                 
-                # Create the formatted relationship text
-                relationship_verbs = {
-                    "evidence": "serves as evidence for",
-                    "background": "provides background for", 
-                    "cause": "causes",
-                    "contrast": "contrasts with",
-                    "condition": "is a condition for"
-                }
-                
-                verb = relationship_verbs.get(rel.relationship_type, rel.relationship_type)
-                relationship_text = f"{assertion1.content} (assertion {assertion1_num}) {verb} {assertion2.content} (assertion {assertion2_num})"
-                
-                # Display relationship with edit and delete options
-                col1, col2, col3 = st.columns([4, 1, 1])
-                
-                with col1:
-                    st.markdown(f"**{rel.relationship_type.upper()}** - {relationship_text}")
-                
-                with col2:
-                    if st.button("✏️", key=f"edit_rel_{i}", help="Edit this relationship"):
-                        # Pre-fill the selection with this relationship's values
-                        st.session_state['edit_relationship'] = {
-                            'assertion1': rel.assertion1_id,
-                            'assertion2': rel.assertion2_id,
-                            'type': rel.relationship_type
-                        }
-                        st.rerun()
-                
-                with col3:
-                    if st.button("🗑️", key=f"delete_rel_{i}", help="Delete this relationship"):
-                        st.session_state.relationships.remove(rel)
-                        st.rerun()
-                
-                st.markdown("---")
+                if assertion1 and assertion2:
+                    assertion1_num = st.session_state.assertions.index(assertion1) + 1
+                    assertion2_num = st.session_state.assertions.index(assertion2) + 1
+                    
+                    # Highlight for selected relationships
+                    is_highlighted = st.session_state.get('scroll_to_relationship') == rel_idx
+                    if is_highlighted:
+                        st.markdown(f"### 🎯 Relationship {rel_idx + 1} (Selected from Graph)")
+                        if 'scroll_to_relationship' in st.session_state:
+                            del st.session_state['scroll_to_relationship']
+                        st.markdown("""
+                        <div style="background-color: rgba(255, 215, 0, 0.2); padding: 10px; border-radius: 5px; border-left: 4px solid #FFD700;">
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"### Relationship {rel_idx + 1}")
+                    
+                    # Create two main columns: left for relationship, right for explanation and actions
+                    left_col, right_col = st.columns([3, 2])
+                    
+                    with left_col:
+                        st.markdown("**Relationship:**")
+                        
+                        # Editable relationship interface in a more compact layout
+                        rel_col1, rel_col2, rel_col3 = st.columns([2, 1, 2])
+                        
+                        with rel_col1:
+                            # First assertion dropdown
+                            assertion1_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
+                                                for a in st.session_state.assertions}
+                            new_assertion1 = st.selectbox(
+                                "From",
+                                options=list(assertion1_options.keys()),
+                                format_func=lambda x: assertion1_options[x],
+                                index=list(assertion1_options.keys()).index(rel.assertion1_id),
+                                key=f"edit_rel_{rel_idx}_assertion1",
+                                help="Select the first assertion"
+                            )
+                        
+                        with rel_col2:
+                            # Relationship type dropdown
+                            relationship_types = ["evidence", "background", "cause", "contrast", "condition"]
+                            new_relationship_type = st.selectbox(
+                                "Type",
+                                options=relationship_types,
+                                index=relationship_types.index(rel.relationship_type),
+                                key=f"edit_rel_{rel_idx}_type",
+                                help="Select relationship type"
+                            )
+                        
+                        with rel_col3:
+                            # Second assertion dropdown
+                            assertion2_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
+                                                for a in st.session_state.assertions}
+                            new_assertion2 = st.selectbox(
+                                "To",
+                                options=list(assertion2_options.keys()),
+                                format_func=lambda x: assertion2_options[x],
+                                index=list(assertion2_options.keys()).index(rel.assertion2_id),
+                                key=f"edit_rel_{rel_idx}_assertion2",
+                                help="Select the second assertion"
+                            )
+                        
+                        # Action buttons
+                        action_col1, action_col2 = st.columns(2)
+                        
+                        with action_col1:
+                            if st.button("💾 Save", key=f"save_rel_{rel_idx}", help="Save changes", use_container_width=True):
+                                # Update the relationship
+                                rel.assertion1_id = new_assertion1
+                                rel.assertion2_id = new_assertion2
+                                rel.relationship_type = new_relationship_type
+                                rel.explanation = f"{new_relationship_type} relationship between assertions"
+                                st.success("Relationship updated!")
+                                st.rerun()
+                        
+                        with action_col2:
+                            if st.button("🗑️ Delete", key=f"delete_rel_{rel_idx}", help="Delete this relationship", use_container_width=True):
+                                st.session_state.relationships.remove(rel)
+                                st.rerun()
+                    
+                    with right_col:
+                        st.markdown("**Explanation:**")
+                        
+                        # Display explanation as read-only
+                        if rel.explanation:
+                            st.info(rel.explanation)
+                        else:
+                            st.info("No explanation provided")
+                    
+                    if is_highlighted:
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    
+                    st.markdown("---")
+        else:
+            st.info("No relationships match the selected filters.")
     else:
         st.info("No relationships created yet. Use the interface above to create relationships between assertions.")
     
