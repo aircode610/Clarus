@@ -10,6 +10,7 @@ import json
 from typing import List, Dict, Any
 from models import Assertion
 from app import ClarusApp, create_clarus_app
+from structure import evaluate_relationship_quality
 
 # Page configuration
 st.set_page_config(
@@ -25,7 +26,7 @@ if "clarus_app" not in st.session_state:
     st.session_state.messages = []
     st.session_state.assertions = []
     st.session_state.deleted_assertions = []
-    st.session_state.current_mode = "idea_capture"
+    st.session_state.current_mode = "Idea Capture"
 
 def display_assertions(assertions: List[Assertion]):
     """Display the current assertions in a nice format."""
@@ -185,6 +186,12 @@ def idea_capture_tab():
                     )
                 else:
                     st.warning("No assertions to export")
+        
+        # Next button to go to Structure mode
+        st.markdown("---")
+        if st.button("➡️ Next: Structure Mode", help="Move to Structure mode to organize your assertions"):
+            st.session_state.current_mode = "Structure"
+            st.rerun()
 
 def structure_tab():
     """Structure mode - Edit and rearrange assertions with relationship analysis."""
@@ -214,84 +221,602 @@ def structure_tab():
                 
                 result = st.session_state.clarus_app.start_structure_analysis()
                 
-                if "final_relationships" in result:
-                    st.session_state.relationships = result["final_relationships"]
+                if "evaluated_relationships" in result:
+                    st.session_state.relationships = result["evaluated_relationships"]
                     st.session_state.structure_analysis_done = True
-                    st.success(f"✅ Relationship analysis complete! Found {len(result['final_relationships'])} relationships.")
+                    st.success(f"✅ Relationship analysis complete! Found {len(result['evaluated_relationships'])} relationships.")
                 else:
                     st.warning("No relationships found between assertions.")
             except Exception as e:
                 st.error(f"Error running structure analysis: {e}")
                 return
     
-    # Create two columns: relationships on left, grouped assertions on right
-    col1, col2 = st.columns([1, 1])
+    # Create assertions lookup for easy access
+    assertions_dict = {a.id: a for a in st.session_state.assertions}
+    
+    # Main graph visualization interface
+    st.subheader("🔗 Assertion Structure Graph")
+    
+    if st.session_state.relationships and len(st.session_state.assertions) > 1:
+        # Graph interaction controls (must be defined before graph creation)
+        st.markdown("---")
+        st.subheader("🎛️ Graph Controls")
+        
+        col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.subheader("🔗 Relationships Found")
-        
-        if st.session_state.relationships:
-            # Group relationships by type
-            relationships_by_type = {}
-            for rel in st.session_state.relationships:
-                if rel.relationship_type not in relationships_by_type:
-                    relationships_by_type[rel.relationship_type] = []
-                relationships_by_type[rel.relationship_type].append(rel)
-            
-            for rel_type, relationships in relationships_by_type.items():
-                with st.expander(f"{rel_type.title()} Relationships ({len(relationships)})", expanded=True):
-                    for i, rel in enumerate(relationships, 1):
-                        # Find assertion contents
-                        assertion1 = next((a for a in st.session_state.assertions if a.id == rel.assertion1_id), None)
-                        assertion2 = next((a for a in st.session_state.assertions if a.id == rel.assertion2_id), None)
-                        
-                        if assertion1 and assertion2:
-                            st.write(f"**{i}.** {assertion1.content[:50]}{'...' if len(assertion1.content) > 50 else ''}")
-                            st.write(f"    → **{rel_type.upper()}** → {assertion2.content[:50]}{'...' if len(assertion2.content) > 50 else ''}")
-                            st.write(f"    *{rel.explanation}*")
-                            
-                            # Action buttons for each relationship
-                            col_edit, col_delete = st.columns(2)
-                            with col_edit:
-                                if st.button("✏️", key=f"edit_rel_{i}_{rel_type}", help="Edit relationship"):
-                                    st.session_state[f"editing_relationship_{i}_{rel_type}"] = True
-                            
-                            with col_delete:
-                                if st.button("🗑️", key=f"delete_rel_{i}_{rel_type}", help="Delete relationship"):
-                                    st.session_state.relationships.remove(rel)
-                                    st.rerun()
-                            
-                            st.markdown("---")
-        else:
-            st.info("No relationships found between assertions.")
+        st.markdown("**View Options**")
+        show_labels = st.checkbox("Show assertion content", value=False)
     
     with col2:
-        st.subheader("📋 Grouped Assertions")
+        st.markdown("**Filter Relationships**")
+        filter_type = st.selectbox("Filter by relationship type:", 
+                                 ["All"] + list(set(rel.relationship_type for rel in st.session_state.relationships)),
+                                 key="graph_filter")
         
-        # Group assertions by relationships
-        if st.session_state.relationships:
-            # Create groups based on relationships
-            groups = create_assertion_groups(st.session_state.assertions, st.session_state.relationships)
+        # Assertion filter for graph
+        assertion_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
+                           for a in st.session_state.assertions}
+        assertion_filter_options = ["All"] + list(assertion_options.keys())
+        selected_assertions_for_graph = st.selectbox(
+            "Show only this assertion",
+            options=assertion_filter_options,
+            format_func=lambda x: "All" if x == "All" else assertion_options[x],
+            index=0,
+            key="graph_assertion_filter",
+            help="Select assertion to display in the graph"
+        )
+    
+    with col3:
+        st.markdown("**Layout Options**")
+        layout_type = st.selectbox("Graph layout:", ["Spring", "Circular", "Hierarchical"], key="graph_layout")
+    
+    # Add interaction mode selector
+    st.markdown("**Interaction Mode**")
+    interaction_mode = st.radio(
+        "Graph interaction:",
+        ["Select Mode (Click edges to jump to details)", "Pan Mode (Drag to move graph)"],
+        key="interaction_mode",
+        horizontal=True
+    )
+    
+    # Create the graph data structure
+    import networkx as nx
+    import plotly.graph_objects as go
+    import plotly.express as px
+    
+    # Create a directed graph
+    G = nx.DiGraph()
+    
+    # Add nodes (assertions) - filter based on user selection
+    assertions_to_show = st.session_state.assertions
+    if selected_assertions_for_graph != "All":
+        # Find all assertions that are involved in relationships with the selected assertion
+        related_assertion_ids = set()
+        related_assertion_ids.add(selected_assertions_for_graph)
+        
+        # Add all assertions that have relationships with the selected assertion
+        for rel in st.session_state.relationships:
+            if rel.assertion1_id == selected_assertions_for_graph:
+                related_assertion_ids.add(rel.assertion2_id)
+            elif rel.assertion2_id == selected_assertions_for_graph:
+                related_assertion_ids.add(rel.assertion1_id)
+        
+        assertions_to_show = [a for a in st.session_state.assertions if a.id in related_assertion_ids]
+    
+    for i, assertion in enumerate(st.session_state.assertions):
+        # Only add node if it's in the filtered list
+        if assertion.id in [a.id for a in assertions_to_show]:
+            G.add_node(assertion.id, 
+                      label=f"Assertion {i+1}",
+                      content=assertion.content,
+                      assertion_num=i+1,
+                      confidence=assertion.confidence,
+                      source=assertion.source        )
+    
+    # Filter relationships based on user selection
+    filtered_relationships = st.session_state.relationships
+    if filter_type != "All":
+        filtered_relationships = [rel for rel in st.session_state.relationships if rel.relationship_type == filter_type]
+    
+    # Further filter relationships based on assertion filter
+    if selected_assertions_for_graph != "All":
+        # Show all relationships between the filtered assertions
+        filtered_assertion_ids = [a.id for a in assertions_to_show]
+        filtered_relationships = [rel for rel in filtered_relationships 
+                                if rel.assertion1_id in filtered_assertion_ids 
+                                and rel.assertion2_id in filtered_assertion_ids]
+    
+    # Add edges (relationships) with colors based on type - high contrast colors
+    relationship_colors = {
+        "evidence": "#32CD32",      # Lime Green
+        "background": "#00CED1",    # Dark Turquoise  
+        "cause": "#1E90FF",         # Dodger Blue
+        "contrast": "#FF8C00",      # Orange
+        "condition": "#FFD700",     # Gold
+        "contradiction": "#FF4444"  # Red
+    }
+    
+    # Add edges for filtered relationships only
+    for rel in filtered_relationships:
+        if rel.assertion1_id in G.nodes and rel.assertion2_id in G.nodes:
+            G.add_edge(rel.assertion1_id, rel.assertion2_id, 
+                      relationship_type=rel.relationship_type,
+                      confidence=rel.confidence,
+                      explanation=rel.explanation)
+    
+    # Use different layouts based on user selection
+    if layout_type == "Circular":
+        pos = nx.circular_layout(G)
+    elif layout_type == "Hierarchical":
+        # Try to create a hierarchical layout
+        try:
+            pos = nx.nx_agraph.graphviz_layout(G, prog='dot')
+        except:
+            # Fallback to spring layout if graphviz is not available
+            pos = nx.spring_layout(G, k=3, iterations=50)
+    else:  # Spring layout
+        pos = nx.spring_layout(G, k=3, iterations=50)
+    
+    # Prepare data for Plotly - create separate traces for each relationship type
+    edge_traces = []
+    
+    for rel_type, color in relationship_colors.items():
+        edge_x = []
+        edge_y = []
+        edge_hover_text = []
+        
+        for edge in G.edges():
+            edge_data = G[edge[0]][edge[1]]
+            if edge_data.get('relationship_type') == rel_type:
+                x0, y0 = pos[edge[0]]
+                x1, y1 = pos[edge[1]]
+                edge_x.extend([x0, x1, None])
+                edge_y.extend([y0, y1, None])
+                
+                confidence = edge_data.get('confidence', 0)
+                explanation = edge_data.get('explanation', '')
+                
+                # Get assertion content for hover
+                assertion1_data = G.nodes[edge[0]]
+                assertion2_data = G.nodes[edge[1]]
+                
+                hover_text = f"<b>{rel_type.upper()}</b><br>"
+                hover_text += f"<b>From:</b> Assertion {assertion1_data['assertion_num']}<br>"
+                hover_text += f"<b>To:</b> Assertion {assertion2_data['assertion_num']}<br>"
+                hover_text += f"<b>Explanation:</b> {explanation}"
+                
+                edge_hover_text.append(hover_text)
+        
+        # Always create trace for legend, even if no edges of this type exist
+        # Create the visible line trace
+        edge_trace = go.Scatter(
+            x=edge_x, y=edge_y,
+            line=dict(width=3, color=color),
+            hoverinfo='text',
+            hovertext=edge_hover_text,
+            mode='lines',
+            name=rel_type.title(),
+            showlegend=True,
+            legendgroup=rel_type
+        )
+        edge_traces.append(edge_trace)
             
-            for group_id, group_assertions in groups.items():
-                with st.expander(f"Group {group_id} ({len(group_assertions)} assertions)", expanded=True):
-                    for i, assertion in enumerate(group_assertions, 1):
-                        st.write(f"**{i}.** {assertion.content}")
-                        
-                        # Action buttons for each assertion in group
-                        col_edit, col_move = st.columns(2)
-                        with col_edit:
-                            if st.button("✏️", key=f"edit_group_{group_id}_{i}", help="Edit assertion"):
-                                st.session_state[f"editing_group_assertion_{group_id}_{i}"] = True
-                        
-                        with col_move:
-                            if st.button("↔️", key=f"move_group_{group_id}_{i}", help="Move to different group"):
-                                st.session_state[f"moving_assertion_{group_id}_{i}"] = True
+        # Only create clickable trace if there are actual edges of this type
+        if edge_x:
+            # Create invisible clickable points along the edges
+            clickable_x = []
+            clickable_y = []
+            clickable_hover = []
+            clickable_customdata = []
+            
+            for edge in G.edges():
+                edge_data = G[edge[0]][edge[1]]
+                if edge_data.get('relationship_type') == rel_type:
+                    # Get edge coordinates
+                    x0, y0 = pos[edge[0]]
+                    x1, y1 = pos[edge[1]]
+                    
+                    # Create clickable points along the edge (start, middle, end)
+                    clickable_x.extend([x0, (x0 + x1) / 2, x1])
+                    clickable_y.extend([y0, (y0 + y1) / 2, y1])
+                    
+                    # Get assertion data for hover
+                    assertion1_data = G.nodes[edge[0]]
+                    assertion2_data = G.nodes[edge[1]]
+                    confidence = edge_data.get('confidence', 0)
+                    explanation = edge_data.get('explanation', '')
+                    
+                    hover_text = f"<b>{rel_type.upper()}</b><br>"
+                    hover_text += f"<b>From:</b> Assertion {assertion1_data['assertion_num']}<br>"
+                    hover_text += f"<b>To:</b> Assertion {assertion2_data['assertion_num']}<br>"
+                    hover_text += f"<b>Explanation:</b> {explanation}"
+                    
+                    clickable_hover.extend([hover_text, hover_text, hover_text])
+                    clickable_customdata.extend([
+                        [edge[0], edge[1], rel_type],
+                        [edge[0], edge[1], rel_type],
+                        [edge[0], edge[1], rel_type]
+                    ])
+            
+            # Create invisible clickable trace
+            clickable_trace = go.Scatter(
+                x=clickable_x, y=clickable_y,
+                mode='markers',
+                marker=dict(size=20, color='rgba(0,0,0,0)', line=dict(width=0)),
+                hoverinfo='text',
+                hovertext=clickable_hover,
+                customdata=clickable_customdata,
+                showlegend=False,
+                legendgroup=rel_type
+            )
+            edge_traces.append(clickable_trace)
+    
+    # Create node trace
+    node_x = []
+    node_y = []
+    node_text = []
+    node_hover_text = []
+    node_colors = []
+    
+    for node in G.nodes():
+        x, y = pos[node]
+        node_x.append(x)
+        node_y.append(y)
+        
+        node_data = G.nodes[node]
+        assertion_num = node_data['assertion_num']
+        content = node_data['content']
+        confidence = node_data.get('confidence', 0)
+        source = node_data.get('source', '')
+        
+        # Node label
+        if show_labels:
+            # Truncate content for display
+            display_content = content[:50] + "..." if len(content) > 50 else content
+            node_text.append(f"<b>Assertion {assertion_num}</b><br>{display_content}")
         else:
-            # If no relationships, show all assertions in one group
-            st.write("**All Assertions (No relationships found):**")
-            for i, assertion in enumerate(st.session_state.assertions, 1):
-                st.write(f"{i}. {assertion.content}")
+            node_text.append(f"<b>Assertion {assertion_num}</b>")
+        
+        # Hover text with full content
+        hover_text = f"<b>Assertion {assertion_num}</b><br><br>"
+        hover_text += f"<b>Content:</b> {content}"
+        
+        node_hover_text.append(hover_text)
+        node_colors.append('#4A90E2')  # Darker blue for better contrast
+    
+    node_trace = go.Scatter(
+        x=node_x, y=node_y,
+        mode='markers+text',
+        hoverinfo='text',
+        text=node_text,
+        textposition="middle center",
+        hovertext=node_hover_text,
+        marker=dict(
+            size=50,
+            color=node_colors,
+            line=dict(width=2, color='#4A90E2')  # Same color as node
+        ),
+        showlegend=False
+    )
+    
+    # Create arrow annotations for directional edges
+    arrow_annotations = []
+    for edge in G.edges():
+        edge_data = G[edge[0]][edge[1]]
+        rel_type = edge_data.get('relationship_type')
+        
+        if rel_type in relationship_colors:
+            # Get edge coordinates
+            x0, y0 = pos[edge[0]]
+            x1, y1 = pos[edge[1]]
+            
+            # Calculate arrow position (closer to the target node)
+            arrow_x = x0 + 0.8 * (x1 - x0)
+            arrow_y = y0 + 0.8 * (y1 - y0)
+            
+            # Calculate arrow direction
+            dx = x1 - x0
+            dy = y1 - y0
+            length = (dx**2 + dy**2)**0.5
+            if length > 0:
+                dx_norm = dx / length
+                dy_norm = dy / length
+                
+                # Create arrow annotation
+                arrow_annotations.append(dict(
+                    x=arrow_x,
+                    y=arrow_y,
+                    ax=arrow_x - 0.1 * dx_norm,
+                    ay=arrow_y - 0.1 * dy_norm,
+                    xref='x',
+                    yref='y',
+                    axref='x',
+                    ayref='y',
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowsize=1.5,
+                    arrowwidth=2,
+                    arrowcolor=relationship_colors[rel_type],
+                    opacity=0.8
+                ))
+    
+    # Create the figure with all traces
+    all_traces = edge_traces + [node_trace]
+    fig = go.Figure(data=all_traces,
+                   layout=go.Layout(
+                       title=dict(
+                           text="Assertion Relationship Graph",
+                           x=0.5,
+                           font=dict(size=20, color='white')
+                       ),
+                       showlegend=True,
+                       hovermode='closest',
+                       dragmode='select' if "Select Mode" in interaction_mode else 'pan',  # Dynamic drag mode
+                       margin=dict(b=20,l=5,r=5,t=40),
+                       annotations=arrow_annotations + [ dict(
+                           text="Hover for details" + (" • Click edges to jump to relationship details" if "Select Mode" in interaction_mode else " • Switch to Select Mode to click edges"),
+                           showarrow=False,
+                           xref="paper", yref="paper",
+                           x=0.005, y=-0.002,
+                           xanchor='left', yanchor='bottom',
+                           font=dict(color='lightgray', size=12)
+                       )],
+                       xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                       yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+                       plot_bgcolor='#1e1e1e',  # Dark background
+                       paper_bgcolor='#1e1e1e',  # Dark paper background
+                       font=dict(color='white'),  # White text for all elements
+                       legend=dict(
+                           bgcolor='rgba(0,0,0,0.5)',
+                           bordercolor='white',
+                           borderwidth=1,
+                           font=dict(color='white')
+                       )
+                   ))
+    
+    # Display the graph with click events
+    selected_data = st.plotly_chart(fig, use_container_width=True, on_select="rerun", selection_mode=["points"])
+    
+    # Handle edge clicks to jump to relationship details
+    if selected_data and 'selection' in selected_data and selected_data['selection']['points']:
+        clicked_points = selected_data['selection']['points']
+        if clicked_points:
+            # Get the clicked point data
+            point_data = clicked_points[0]
+            
+            # Debug: show what was clicked
+            st.write("Debug - Clicked point data:", point_data)
+            
+            if 'customdata' in point_data and point_data['customdata']:
+                # This is an edge click
+                edge_info = point_data['customdata']
+                st.write("Debug - Edge info:", edge_info)
+                
+                if len(edge_info) >= 2:
+                    assertion1_id, assertion2_id = edge_info[0], edge_info[1]
+                    # Find the relationship and scroll to it
+                    for i, rel in enumerate(st.session_state.relationships):
+                        if (rel.assertion1_id == assertion1_id and rel.assertion2_id == assertion2_id) or \
+                           (rel.assertion1_id == assertion2_id and rel.assertion2_id == assertion1_id):
+                            st.session_state['scroll_to_relationship'] = i
+                            st.rerun()
+                            break
+    
+    # Relationship Management Section
+    st.markdown("---")
+    st.subheader("🔗 Manage Relationships")
+    
+    # Create assertion selection interface
+    if len(st.session_state.assertions) >= 2:
+        st.markdown("### Create or Modify Relationship")
+        
+        # Create two main columns: left for selection, right for preview
+        left_col, right_col = st.columns([1, 1])
+        
+        with left_col:
+            if 'edit_relationship' in st.session_state:
+                st.markdown("#### ✏️ Editing Relationship")
+                st.info("You are currently editing a relationship. Make your changes and click Add/Change to save.")
+            else:
+                st.markdown("#### Selection")
+            
+            # First assertion selector
+            assertion1_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
+                                for a in st.session_state.assertions}
+            
+            # Pre-fill if editing an existing relationship
+            default_assertion1 = None
+            if 'edit_relationship' in st.session_state:
+                default_assertion1 = st.session_state['edit_relationship']['assertion1']
+            
+            selected_assertion1 = st.selectbox(
+                "First Assertion",
+                options=list(assertion1_options.keys()),
+                format_func=lambda x: assertion1_options[x],
+                index=list(assertion1_options.keys()).index(default_assertion1) if default_assertion1 and default_assertion1 in assertion1_options else 0,
+                key="manage_rel_assertion1",
+                help="Select the first assertion"
+            )
+            
+            # Relationship type selector
+            relationship_types = ["evidence", "background", "cause", "contrast", "condition", "contradiction"]
+            relationship_labels = {
+                "evidence": "Evidence - One assertion provides evidence/examples for another",
+                "background": "Background - One assertion provides context/setting for another", 
+                "cause": "Cause - One assertion causes/leads to another",
+                "contrast": "Contrast - Assertions present different viewpoints/approaches",
+                "condition": "Condition - One assertion is a prerequisite for another",
+                "contradiction": "Contradiction - Assertions directly contradict/negate each other"
+            }
+            relationship_options = {rt: relationship_labels[rt] for rt in relationship_types}
+            
+            # Pre-fill if editing an existing relationship
+            default_relationship = None
+            if 'edit_relationship' in st.session_state:
+                default_relationship = st.session_state['edit_relationship']['type']
+            
+            selected_relationship = st.selectbox(
+                "Relationship Type",
+                options=list(relationship_options.keys()),
+                index=relationship_types.index(default_relationship) if default_relationship and default_relationship in relationship_types else 0,
+                key="manage_rel_type",
+                help="Select the type of relationship"
+            )
+            
+            # Second assertion selector
+            assertion2_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
+                                for a in st.session_state.assertions}
+            
+            # Pre-fill if editing an existing relationship
+            default_assertion2 = None
+            if 'edit_relationship' in st.session_state:
+                default_assertion2 = st.session_state['edit_relationship']['assertion2']
+            
+            selected_assertion2 = st.selectbox(
+                "Second Assertion",
+                options=list(assertion2_options.keys()),
+                format_func=lambda x: assertion2_options[x],
+                index=list(assertion2_options.keys()).index(default_assertion2) if default_assertion2 and default_assertion2 in assertion2_options else 0,
+                key="manage_rel_assertion2",
+                help="Select the second assertion"
+            )
+            
+            # Real-time evaluation when dropdowns change
+            if selected_assertion1 and selected_assertion2:
+                assertion1_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion1), None)
+                assertion2_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion2), None)
+                
+                if assertion1_obj and assertion2_obj:
+                    # Create a unique key for this combination to cache evaluation
+                    evaluation_key = f"eval_{selected_assertion1}_{selected_assertion2}_{selected_relationship}"
+                    
+                    # Check if we already evaluated this combination
+                    if evaluation_key not in st.session_state:
+                        with st.spinner("Evaluating relationship quality..."):
+                            confidence, reason, suggestion = evaluate_relationship_quality(
+                                assertion1_obj.content, 
+                                assertion2_obj.content, 
+                                selected_relationship
+                            )
+                        st.session_state[evaluation_key] = (confidence, reason, suggestion)
+                    else:
+                        confidence, reason, suggestion = st.session_state[evaluation_key]
+                    
+                    # Display evaluation results
+                    st.markdown("**Relationship Quality Evaluation:**")
+                    
+                    # Color code based on confidence and suggestion
+                    if suggestion == "ADD":
+                        st.success(f"✅ **{confidence}%** - {reason}")
+                        st.info("💡 **Suggestion:** Add this relationship")
+                    elif suggestion.startswith("MODIFY to"):
+                        st.warning(f"⚠️ **{confidence}%** - {reason}")
+                        st.info(f"💡 **Suggestion:** {suggestion}")
+                    else:  # REMOVE
+                        st.error(f"❌ **{confidence}%** - {reason}")
+                        st.info("💡 **Suggestion:** Remove this relationship")
+            
+            # Add/Change button
+            if st.button("➕ Add/Change", key="manage_relationship_btn", help="Add new or modify existing relationship", use_container_width=True):
+                # Get assertion objects
+                assertion1_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion1), None)
+                assertion2_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion2), None)
+                
+                if assertion1_obj and assertion2_obj:
+                    # Get the cached evaluation results
+                    evaluation_key = f"eval_{selected_assertion1}_{selected_assertion2}_{selected_relationship}"
+                    if evaluation_key in st.session_state:
+                        confidence, reason, suggestion = st.session_state[evaluation_key]
+                        
+                        # Ask for confirmation based on suggestion
+                        if suggestion == "REMOVE":
+                            st.warning("⚠️ The LLM suggests removing this relationship. Are you sure you want to add it?")
+                            if not st.button("Yes, Add Anyway", key="confirm_remove"):
+                                st.stop()
+                        elif suggestion.startswith("MODIFY to"):
+                            st.warning("⚠️ The LLM suggests modifying this relationship. Are you sure you want to add it as-is?")
+                            if not st.button("Yes, Add Anyway", key="confirm_modify"):
+                                st.stop()
+                        
+                        # Check if relationship already exists
+                        existing_rel = None
+                        for rel in st.session_state.relationships:
+                            if ((rel.assertion1_id == selected_assertion1 and rel.assertion2_id == selected_assertion2) or
+                                (rel.assertion1_id == selected_assertion2 and rel.assertion2_id == selected_assertion1)):
+                                existing_rel = rel
+                                break
+                        
+                        if existing_rel:
+                            # Update existing relationship
+                            existing_rel.relationship_type = selected_relationship
+                            existing_rel.confidence = confidence / 100.0  # Convert to 0-1 scale
+                            existing_rel.explanation = f"{selected_relationship} relationship between assertions. LLM Evaluation: {reason} (Suggestion: {suggestion})"
+                            st.success("Relationship updated successfully!")
+                        else:
+                            # Create new relationship
+                            from models import Relationship
+                            new_rel = Relationship(
+                                assertion1_id=selected_assertion1,
+                                assertion2_id=selected_assertion2,
+                                relationship_type=selected_relationship,
+                                confidence=confidence / 100.0,  # Convert to 0-1 scale
+                                explanation=f"{selected_relationship} relationship between assertions. LLM Evaluation: {reason} (Suggestion: {suggestion})"
+                            )
+                            st.session_state.relationships.append(new_rel)
+                            st.success("Relationship added successfully!")
+                        
+                        # Clear edit state after successful operation
+                        if 'edit_relationship' in st.session_state:
+                            del st.session_state['edit_relationship']
+                        st.rerun()
+        
+        with right_col:
+            st.markdown("#### Interactive Preview")
+            
+            # Show preview of the relationship
+            if selected_assertion1 and selected_assertion2:
+                assertion1_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion1), None)
+                assertion2_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion2), None)
+                
+                if assertion1_obj and assertion2_obj:
+                    assertion1_num = st.session_state.assertions.index(assertion1_obj) + 1
+                    assertion2_num = st.session_state.assertions.index(assertion2_obj) + 1
+                    
+                    # Create the formatted relationship text
+                    relationship_verbs = {
+                        "evidence": "serves as evidence for",
+                        "background": "provides background for", 
+                        "cause": "causes",
+                        "contrast": "contrasts with",
+                        "condition": "is a condition for",
+                        "contradiction": "contradicts"
+                    }
+                    
+                    verb = relationship_verbs.get(selected_relationship, selected_relationship)
+                    
+                    # Display in 3 rows format
+                    st.markdown("**From:**")
+                    st.info(f"Assertion {assertion1_num}: {assertion1_obj.content}")
+                    
+                    st.markdown("**Relationship:**")
+                    st.success(f"{selected_relationship.upper()}: {verb}")
+                    
+                    st.markdown("**To:**")
+                    st.info(f"Assertion {assertion2_num}: {assertion2_obj.content}")
+                    
+                    # Show the full formatted relationship
+                    st.markdown("**Complete Relationship:**")
+                    relationship_text = f"{assertion1_obj.content} (assertion {assertion1_num}) {verb} {assertion2_obj.content} (assertion {assertion2_num})"
+                    st.markdown(f"*{relationship_text}*")
+                else:
+                    st.info("Please select both assertions to see the preview.")
+            else:
+                st.info("Please select both assertions to see the preview.")
+    else:
+        st.info("You need at least 2 assertions to create relationships.")
+    
+    
     
     # Action buttons at the bottom
     st.markdown("---")
@@ -323,6 +848,12 @@ def structure_tab():
             st.session_state.relationships = []
             st.session_state.structure_analysis_done = False
             st.rerun()
+    
+    # Next button to go to Review mode
+    st.markdown("---")
+    if st.button("➡️ Next: Review Mode", help="Move to Review mode to check for potential issues"):
+        st.session_state.current_mode = "Review"
+        st.rerun()
 
 
 def create_assertion_groups(assertions, relationships):
@@ -374,13 +905,34 @@ def review_tab():
     st.markdown("Review your assertions for potential issues like missing justification, vague language, or unclear logical flow.")
     
     st.info("🚧 Review mode is coming soon! This will flag potential issues in your assertions.")
+    
+    # Next button to go to Prose mode
+    st.markdown("---")
+    if st.button("➡️ Next: Prose Mode", help="Move to Prose mode to transform assertions into fluent text"):
+        st.session_state.current_mode = "Prose"
+        st.rerun()
 
 def prose_tab():
     """Prose mode - Transform assertions into fluent text."""
+    # Add green styling for Prose mode
+    st.markdown("""
+    <style>
+    .prose-mode {
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
+        border-radius: 0.5rem;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="prose-mode">', unsafe_allow_html=True)
     st.header("📖 Prose Mode")
     st.markdown("Transform your refined assertions into fluent, reader-friendly text.")
     
     st.info("🚧 Prose mode is coming soon! This will transform your assertions into well-structured prose.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def main():
     """Main Streamlit application."""
@@ -396,8 +948,14 @@ def main():
         current_mode = st.selectbox(
             "Select Mode",
             ["Idea Capture", "Structure", "Review", "Prose"],
-            index=0
+            index=["Idea Capture", "Structure", "Review", "Prose"].index(st.session_state.get("current_mode", "Idea Capture")),
+            help="Click to select mode"
         )
+        
+        # Update session state when mode changes
+        if current_mode != st.session_state.get("current_mode", "Idea Capture"):
+            st.session_state.current_mode = current_mode
+            st.rerun()
         
         st.markdown("---")
         
@@ -428,6 +986,7 @@ def main():
         """)
     
     # Main content area
+    current_mode = st.session_state.get("current_mode", "Idea Capture")
     if current_mode == "Idea Capture":
         idea_capture_tab()
     elif current_mode == "Structure":

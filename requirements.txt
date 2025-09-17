@@ -18,3 +18,8 @@ tiktoken>=0.7.0
 python-dotenv>=1.0.0
 pydantic>=2.8.0
 requests>=2.32.0
+
+# Graph visualization
+networkx>=3.0
+matplotlib>=3.7.0
+plotly>=5.0.0
