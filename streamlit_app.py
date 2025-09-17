@@ -15,7 +15,9 @@ import json
 from typing import List, Dict, Any
 
 import streamlit_voice
-from models import Assertion
+import conflict_resolving
+from conflict_resolving import GlobalGraph
+from models import Assertion, Relationship
 from app import ClarusApp, create_clarus_app
 from structure import evaluate_relationship_quality
 
@@ -925,7 +927,27 @@ def review_tab():
     """Review mode - Flag potential issues."""
     st.header("🔍 Review Mode")
     st.markdown("Review your assertions for potential issues like missing justification, vague language, or unclear logical flow.")
-    
+
+    if not st.session_state.get("global_graph", None):
+        st.session_state.global_graph = GlobalGraph(conflict_resolving.test_2)
+
+    if st.session_state.get("chose_method", False):
+        if st.session_state.global_graph.resolve_cycles_and_conflicts(st.session_state.automatic_method):
+            st.text("All conflicts have been resolved")
+            for rel in st.session_state.global_graph.relationships:
+                st.write(rel.assertion1_id, rel.relationship_type, rel.assertion2_id)
+        elif st.session_state.automatic_method:
+            st.rerun()
+    else:
+        if st.button("Manual"):
+            st.session_state.automatic_method = False
+            st.session_state.chose_method = True
+            st.rerun()
+        if st.button("Automatic"):
+            st.session_state.automatic_method = True
+            st.session_state.chose_method = True
+            st.rerun()
+
     st.info("🚧 Review mode is coming soon! This will flag potential issues in your assertions.")
     
     # Next button to go to Prose mode
