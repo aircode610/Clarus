@@ -10,7 +10,7 @@ from langchain_core.messages import BaseMessage
 from pydantic import BaseModel, Field
 from datetime import datetime
 
-from .assertions import Assertion, Relationship
+from .assertions import Assertion, Relationship, DocumentPlan, DocumentReview, ParagraphIssue
 
 
 class ChangeRecord(BaseModel):
@@ -79,3 +79,16 @@ class StructureState(BaseModel):
     evaluated_relationships: List[Relationship] = Field(default_factory=list)
     current_input: str = Field(default="")
     chat_summary: str = Field(default="")
+
+
+class ReviewState(BaseModel):
+    """State for the Review workflow."""
+    messages: Annotated[List[BaseMessage], add_messages] = Field(default_factory=list)
+    assertions: List[Assertion] = Field(default_factory=list)
+    relationships: List[Relationship] = Field(default_factory=list)
+    document_plan: Optional[DocumentPlan] = Field(default=None)
+    document_review: Optional[DocumentReview] = Field(default=None)
+    current_input: str = Field(default="")
+    chat_summary: str = Field(default="")
+    plan_iteration: int = Field(default=0, description="Number of plan refinement iterations")
+    review_complete: bool = Field(default=False, description="Whether the review process is complete")

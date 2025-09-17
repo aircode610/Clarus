@@ -8,9 +8,10 @@ structured document creation.
 
 from typing import List, Dict, Any, Optional
 import os
-from models import Assertion, ChangeHistory
+from models import Assertion, ChangeHistory, Relationship
 from idea_capture import IdeaCaptureWorkflow
 from structure import StructureWorkflow
+from review import ReviewWorkflow
 
 
 class ClarusApp:
@@ -35,10 +36,12 @@ class ClarusApp:
         # Initialize workflows
         self.idea_capture_workflow = IdeaCaptureWorkflow(model_name, config)
         self.structure_workflow = StructureWorkflow(model_name, config)
+        self.review_workflow = ReviewWorkflow(model_name, config)
         
         # Application state
         self.current_assertions: List[Assertion] = []
-        self.current_mode: str = "idea_capture"  # or "structure"
+        self.current_relationships: List[Relationship] = []
+        self.current_mode: str = "idea_capture"  # or "structure" or "review"
         self.session_id: str = "default"
         self.change_history: ChangeHistory = ChangeHistory()
     
@@ -203,11 +206,50 @@ class ClarusApp:
             raise ValueError("No assertions available for structure analysis")
         
         result = self.structure_workflow.run(assertions_to_analyze, self.session_id)
+        
+        # Extract relationships from the result
+        if "evaluated_relationships" in result:
+            self.current_relationships = result["evaluated_relationships"]
+        
+        return result
+    
+    def start_review_analysis(self, assertions: List[Assertion] = None, relationships: List[Relationship] = None, session_id: str = None) -> Dict[str, Any]:
+        """
+        Start the Review analysis workflow.
+        
+        Args:
+            assertions: List of assertions to review. If None, uses current assertions
+            relationships: List of relationships to review. If None, uses current relationships
+            session_id: Optional session ID for the analysis
+            
+        Returns:
+            Dictionary containing the review analysis result
+        """
+        if session_id:
+            self.session_id = session_id
+            
+        self.current_mode = "review"
+        
+        # Use provided data or current data
+        assertions_to_review = assertions or self.current_assertions
+        relationships_to_review = relationships or self.current_relationships
+        
+        if not assertions_to_review:
+            raise ValueError("No assertions available for review analysis")
+        
+        if not relationships_to_review:
+            raise ValueError("No relationships available for review analysis")
+        
+        result = self.review_workflow.run(assertions_to_review, relationships_to_review, self.session_id)
         return result
     
     def get_current_assertions(self) -> List[Assertion]:
         """Get the current list of assertions."""
         return self.current_assertions.copy()
+    
+    def get_current_relationships(self) -> List[Relationship]:
+        """Get the current list of relationships."""
+        return self.current_relationships.copy()
     
     def get_current_mode(self) -> str:
         """Get the current workflow mode."""
@@ -216,6 +258,7 @@ class ClarusApp:
     def reset_session(self):
         """Reset the application state for a new session."""
         self.current_assertions = []
+        self.current_relationships = []
         self.current_mode = "idea_capture"
         self.session_id = "default"
         self.change_history = ChangeHistory()
@@ -248,6 +291,7 @@ class ClarusApp:
         return {
             "current_mode": self.current_mode,
             "assertion_count": len(self.current_assertions),
+            "relationship_count": len(self.current_relationships),
             "session_id": self.session_id,
             "model_name": self.model_name
         }
@@ -270,14 +314,14 @@ def create_clarus_app(model_name: str = "gpt-4o-mini", config: dict = None) -> C
 
 def run_full_workflow(initial_input: str, model_name: str = "gpt-4o-mini") -> Dict[str, Any]:
     """
-    Run the complete Clarus workflow from idea capture to structure analysis.
+    Run the complete Clarus workflow from idea capture to review analysis.
     
     Args:
         initial_input: Initial user input for idea capture
         model_name: The OpenAI model to use
         
     Returns:
-        Dictionary containing both idea capture and structure analysis results
+        Dictionary containing idea capture, structure analysis, and review results
     """
     app = create_clarus_app(model_name)
     
@@ -287,10 +331,15 @@ def run_full_workflow(initial_input: str, model_name: str = "gpt-4o-mini") -> Di
     # Run structure analysis
     structure_result = app.start_structure_analysis()
     
+    # Run review analysis
+    review_result = app.start_review_analysis()
+    
     return {
         "idea_capture": idea_result,
         "structure_analysis": structure_result,
+        "review_analysis": review_result,
         "final_assertions": app.get_current_assertions(),
+        "final_relationships": app.get_current_relationships(),
         "status": app.get_workflow_status()
     }
 
@@ -317,6 +366,11 @@ if __name__ == "__main__":
     print("\nRunning Structure Analysis...")
     structure_result = app.start_structure_analysis()
     print("Structure analysis complete!")
+    
+    # Run review analysis
+    print("\nRunning Review Analysis...")
+    review_result = app.start_review_analysis()
+    print("Review analysis complete!")
     
     # Print final status
     print(f"\nFinal Status: {app.get_workflow_status()}")
