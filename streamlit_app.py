@@ -36,6 +36,11 @@ if "clarus_app" not in st.session_state:
     st.session_state.assertions = []
     st.session_state.deleted_assertions = []
     st.session_state.current_mode = "Idea Capture"
+    # Conflict resolution state
+    st.session_state.conflicts_resolved = False
+    st.session_state.chose_resolution_method = False
+    st.session_state.ordered_graph_generated = False
+    st.session_state.global_graph = None
 
 def display_assertions(assertions: List[Assertion]):
     """Display the current assertions in a nice format."""
@@ -651,16 +656,20 @@ def structure_tab():
             assertion1_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
                                 for a in st.session_state.assertions}
             
-            # Pre-fill if editing an existing relationship
+            # Pre-fill if editing an existing relationship, otherwise use empty default
             default_assertion1 = None
             if 'edit_relationship' in st.session_state:
                 default_assertion1 = st.session_state['edit_relationship']['assertion1']
             
+            # Add empty option at the beginning
+            assertion1_options_with_empty = {"": "Select first assertion..."}
+            assertion1_options_with_empty.update(assertion1_options)
+            
             selected_assertion1 = st.selectbox(
                 "First Assertion",
-                options=list(assertion1_options.keys()),
-                format_func=lambda x: assertion1_options[x],
-                index=list(assertion1_options.keys()).index(default_assertion1) if default_assertion1 and default_assertion1 in assertion1_options else 0,
+                options=list(assertion1_options_with_empty.keys()),
+                format_func=lambda x: assertion1_options_with_empty[x],
+                index=list(assertion1_options_with_empty.keys()).index(default_assertion1) if default_assertion1 and default_assertion1 in assertion1_options_with_empty else 0,
                 key="manage_rel_assertion1",
                 help="Select the first assertion"
             )
@@ -709,7 +718,7 @@ def structure_tab():
             )
             
             # Real-time evaluation when dropdowns change
-            if selected_assertion1 and selected_assertion2:
+            if selected_assertion1 and selected_assertion2 and selected_assertion1 != "":
                 assertion1_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion1), None)
                 assertion2_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion2), None)
                 
@@ -745,6 +754,11 @@ def structure_tab():
             
             # Add/Change button
             if st.button("➕ Add/Change", key="manage_relationship_btn", help="Add new or modify existing relationship", use_container_width=True):
+                # Validate selection
+                if not selected_assertion1 or selected_assertion1 == "":
+                    st.error("Please select the first assertion.")
+                    st.stop()
+                
                 # Get assertion objects
                 assertion1_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion1), None)
                 assertion2_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion2), None)
@@ -795,13 +809,20 @@ def structure_tab():
                         # Clear edit state after successful operation
                         if 'edit_relationship' in st.session_state:
                             del st.session_state['edit_relationship']
+                        
+                        # Update global graph with new relationships
+                        st.session_state.global_graph = GlobalGraph(st.session_state.relationships)
+                        st.session_state.conflicts_resolved = False  # Need to re-resolve conflicts
+                        st.session_state.chose_resolution_method = False
+                        st.session_state.ordered_graph_generated = False
+                        
                         st.rerun()
         
         with right_col:
             st.markdown("#### Interactive Preview")
             
             # Show preview of the relationship
-            if selected_assertion1 and selected_assertion2:
+            if selected_assertion1 and selected_assertion2 and selected_assertion1 != "":
                 assertion1_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion1), None)
                 assertion2_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion2), None)
                 
@@ -854,6 +875,11 @@ def structure_tab():
             st.session_state.clarus_app.current_assertions = st.session_state.assertions
             st.session_state.structure_analysis_done = False
             st.session_state.relationships = []
+            # Reset conflict resolution state
+            st.session_state.conflicts_resolved = False
+            st.session_state.chose_resolution_method = False
+            st.session_state.ordered_graph_generated = False
+            st.session_state.global_graph = None
             st.rerun()
     
     with col_export:
@@ -873,7 +899,77 @@ def structure_tab():
         if st.button("🗑️ Reset Structure", help="Clear all relationships"):
             st.session_state.relationships = []
             st.session_state.structure_analysis_done = False
+            # Reset conflict resolution state
+            st.session_state.conflicts_resolved = False
+            st.session_state.chose_resolution_method = False
+            st.session_state.ordered_graph_generated = False
+            st.session_state.global_graph = None
             st.rerun()
+    
+    # Conflict Resolution Section
+    st.markdown("---")
+    st.subheader("🔧 Conflict Resolution")
+    st.markdown("Resolve any cycles or contradictions in your assertion relationships.")
+    
+    # Initialize global graph if not exists
+    if not st.session_state.get("global_graph", None):
+        st.session_state.global_graph = GlobalGraph(st.session_state.get("relationships", []))
+    
+    # Check if we need to resolve conflicts
+    if not st.session_state.get("conflicts_resolved", False):
+        # Method selection
+        if not st.session_state.get("chose_resolution_method", False):
+            st.markdown("**Choose resolution method:**")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("🤖 Automatic Resolution", help="Automatically resolve conflicts using AI"):
+                    st.session_state.automatic_resolution = True
+                    st.session_state.chose_resolution_method = True
+                    st.rerun()
+            
+            with col2:
+                if st.button("👤 Manual Resolution", help="Manually choose which assertions to remove"):
+                    st.session_state.automatic_resolution = False
+                    st.session_state.chose_resolution_method = True
+                    st.rerun()
+        else:
+            # Create assertions dictionary for UI
+            assertions_dict = {a.id: a.content for a in st.session_state.assertions}
+            
+            # Run conflict resolution
+            if st.session_state.global_graph.resolve_cycles_and_conflicts(
+                st.session_state.automatic_resolution, 
+                assertions_dict
+            ):
+                st.success("✅ All conflicts have been resolved!")
+                
+                # Generate ordered graph
+                if not st.session_state.get("ordered_graph_generated", False):
+                    st.session_state.global_graph.order_the_graph()
+                    st.session_state.ordered_graph = st.session_state.global_graph.ordered_graph
+                    
+                    # Add any assertions not in the ordered graph
+                    for assertion in st.session_state.assertions:
+                        if assertion.id not in st.session_state.ordered_graph:
+                            st.session_state.ordered_graph.append(assertion.id)
+                    
+                    st.session_state.ordered_graph_generated = True
+                    st.session_state.conflicts_resolved = True
+                    
+                    # Update relationships in session state
+                    st.session_state.relationships = st.session_state.global_graph.get_updated_relationships()
+                    
+                    st.rerun()
+            else:
+                st.info("🔄 Resolving conflicts... Please make your selections above.")
+    else:
+        st.success("✅ Conflicts have been resolved and graph has been ordered.")
+        
+        # Show summary
+        if st.session_state.get("ordered_graph"):
+            st.markdown(f"**Ordered assertions:** {len(st.session_state.ordered_graph)} assertions")
+            st.markdown(f"**Remaining relationships:** {len(st.session_state.relationships)} relationships")
     
     # Next button to go to Review mode
     st.markdown("---")
@@ -930,54 +1026,27 @@ def review_tab():
     st.header("🔍 Review Mode")
     st.markdown("Review your assertions for potential issues like missing justification, vague language, or unclear logical flow.")
 
-    if not st.session_state.get("global_graph", None):
-        st.session_state.global_graph = GlobalGraph(st.session_state.get("relationships", []))
-
-    if st.session_state.get("chose_method", False):
-        if st.session_state.global_graph.resolve_cycles_and_conflicts(st.session_state.automatic_method):
-            st.text("All conflicts have been resolved")
-            if not st.session_state.get("ordered_graph", False):
-                print("False")
-                st.session_state.global_graph.order_the_graph()
-                st.session_state.ordered_graph = st.session_state.global_graph.ordered_graph
-                for assertion in st.session_state.assertions:
-                    if assertion.id not in st.session_state.ordered_graph:
-                        st.session_state.ordered_graph.append(assertion.id)
-
-                st.session_state.result_text = ""
-
-                assertion_dictionary = {}
-                for assertion in st.session_state.assertions:
-                    assertion_dictionary[assertion.id] = assertion.content
-
-                for id in st.session_state.ordered_graph:
-                    satellite = False
-                    nucleus = False
-                    for rel in st.session_state.global_graph.relationships:
-                        if rel.assertion1_id == id:
-                            satellite = True
-                        if rel.assertion2_id == id:
-                            nucleus = True
-                            st.session_state.result_text += (f"The following assertion: \"{assertion_dictionary[rel.assertion1_id]}\" is a "
-                                                             f"{rel.relationship_type} for this assertion: \"{assertion_dictionary[id]}\"\n")
-                    if not nucleus and not satellite:
-                        st.session_state.result_text += f"The assertion: \"{assertion_dictionary[id]}\" is a separate idea\n"
-            st.text_area("Graph has been ordered", key="result_text")
-
-            # for rel in st.session_state.global_graph.relationships:
-            #     st.write(rel.assertion1_id, rel.relationship_type, rel.assertion2_id)
-        elif st.session_state.automatic_method:
-            st.rerun()
+    # Check if conflicts have been resolved in structure mode
+    if st.session_state.get("conflicts_resolved", False):
+        st.success("✅ Conflicts have been resolved in Structure mode.")
+        
+        # Show ordered graph summary
+        if st.session_state.get("ordered_graph"):
+            st.markdown(f"**Ordered assertions:** {len(st.session_state.ordered_graph)} assertions")
+            st.markdown(f"**Remaining relationships:** {len(st.session_state.relationships)} relationships")
+            
+            # Show the ordered structure
+            st.subheader("📋 Ordered Assertion Structure")
+            assertions_dict = {a.id: a for a in st.session_state.assertions}
+            
+            for i, assertion_id in enumerate(st.session_state.ordered_graph, 1):
+                assertion = assertions_dict.get(assertion_id)
+                if assertion:
+                    st.markdown(f"{i}. **{assertion_id}**: {assertion.content}")
     else:
-        if st.button("Manual"):
-            st.session_state.automatic_method = False
-            st.session_state.chose_method = True
-            st.rerun()
-        if st.button("Automatic"):
-            st.session_state.automatic_method = True
-            st.session_state.chose_method = True
-            st.rerun()
-
+        st.warning("⚠️ Please complete conflict resolution in Structure mode before proceeding to Review.")
+        st.markdown("Go back to Structure mode to resolve any cycles or contradictions in your assertion relationships.")
+    
     st.info("🚧 Review mode is coming soon! This will flag potential issues in your assertions.")
     
     # Next button to go to Prose mode
@@ -1044,6 +1113,11 @@ def main():
             st.session_state.messages = []
             st.session_state.assertions = []
             st.session_state.deleted_assertions = []
+            # Reset conflict resolution state
+            st.session_state.conflicts_resolved = False
+            st.session_state.chose_resolution_method = False
+            st.session_state.ordered_graph_generated = False
+            st.session_state.global_graph = None
             st.rerun()
         
         st.markdown("---")

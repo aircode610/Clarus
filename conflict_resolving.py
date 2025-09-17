@@ -152,12 +152,13 @@ class GlobalGraph:
 
         return components
 
-    def resolve_cycle_by_user(self, cycle: List[str]) -> str:
+    def resolve_cycle_by_user(self, cycle: List[str], assertions_dict: dict) -> str:
         """
         Ask the user to resolve a cycle in the graph by selecting an assertion to remove.
 
         Args:
             cycle (List[str]): A list of assertion IDs (nodes) that form a directed cycle.
+            assertions_dict (dict): Dictionary mapping assertion IDs to assertion content.
 
         Returns:
             str: The assertion ID chosen by the user to remove, thereby breaking the cycle.
@@ -165,18 +166,45 @@ class GlobalGraph:
         Description:
             - Prompts the user (or external agent) to decide which node to remove.
         """
-        st.text("Cycle detected: " + " -> ".join(cycle))
-        st.text("Please select a node to delete from the cycle.")
-        node = st.selectbox("Node to delete", cycle)
-        return node if st.button("Resolve cycle") else None
+        st.warning("🔄 **Cycle Detected!**")
+        st.markdown("The following assertions form a cycle that needs to be resolved:")
+        
+        # Show the cycle with assertion content
+        cycle_text = ""
+        for i, node_id in enumerate(cycle):
+            assertion_content = assertions_dict.get(node_id, f"Assertion {node_id}")
+            cycle_text += f"{i+1}. **{node_id}**: {assertion_content}\n"
+        
+        st.markdown(cycle_text)
+        st.markdown("Please select which assertion to remove to break the cycle:")
+        
+        # Create options with assertion content
+        cycle_options = {}
+        for node_id in cycle:
+            assertion_content = assertions_dict.get(node_id, f"Assertion {node_id}")
+            cycle_options[node_id] = f"{node_id}: {assertion_content[:100]}{'...' if len(assertion_content) > 100 else ''}"
+        
+        selected_node = st.selectbox("Select assertion to remove:", list(cycle_options.keys()), 
+                                   format_func=lambda x: cycle_options[x])
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("✅ Remove Selected", type="primary"):
+                return selected_node
+        with col2:
+            if st.button("❌ Cancel"):
+                return None
+        
+        return None
 
-    def resolve_contradiction_by_user(self, node: str, other_nodes: List[str]) -> bool:
+    def resolve_contradiction_by_user(self, node: str, other_nodes: List[str], assertions_dict: dict) -> bool:
         """
         Ask the user to resolve a contradiction by choosing which nodes to remove.
 
         Args:
             node (str): The single assertion ID representing one side of the contradiction.
             other_nodes (List[str]): A list of assertion IDs representing the conflicting neighbors.
+            assertions_dict (dict): Dictionary mapping assertion IDs to assertion content.
 
         Returns:
             bool:
@@ -188,10 +216,29 @@ class GlobalGraph:
                 * Keep `other_nodes` and delete `node`, or
                 * Keep `node` and delete all `other_nodes`.
         """
-        st.text("Contradiction detected: " + node)
-        st.text("Please select a node to delete from the contradiction.")
-        if st.button(node): return True
-        if st.button("; ".join(other_nodes)): return False
+        st.error("⚠️ **Contradiction Detected!**")
+        st.markdown("The following assertions contradict each other:")
+        
+        # Show the main node
+        main_assertion = assertions_dict.get(node, f"Assertion {node}")
+        st.markdown(f"**Main assertion:** {node}: {main_assertion}")
+        
+        # Show conflicting nodes
+        st.markdown("**Conflicting assertions:**")
+        for other_node in other_nodes:
+            other_assertion = assertions_dict.get(other_node, f"Assertion {other_node}")
+            st.markdown(f"- {other_node}: {other_assertion}")
+        
+        st.markdown("Please choose which assertions to keep:")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button(f"✅ Keep: {node}", help=f"Remove conflicting assertions: {', '.join(other_nodes)}"):
+                return True
+        with col2:
+            if st.button(f"✅ Keep: {', '.join(other_nodes)}", help=f"Remove main assertion: {node}"):
+                return False
+        
         return None
 
     def automatic_or_manual(self) -> bool:
@@ -317,23 +364,22 @@ class GlobalGraph:
                         min_node = node
         return min_node
 
-    def resolve_cycles_and_conflicts(self, automatic) -> bool:
+    def resolve_cycles_and_conflicts(self, automatic, assertions_dict: dict = None) -> bool:
         """
         Resolve cycles and contradictions in the graph using either automatic or manual mode.
 
         Args:
             - automatic (bool): whether to use automatic mode or manual mode.
+            - assertions_dict (dict): Dictionary mapping assertion IDs to assertion content for UI display.
 
         Returns:
-            None
+            bool: True if all conflicts are resolved, False if still resolving.
 
         Description:
             - Ensures the graph becomes acyclic and contradiction-free by repeatedly removing nodes.
             - Workflow:
-                1. Ask the user (or system) whether resolution should be automatic or manual
-                   using `automatic_or_manual()`.
-                2. Detect strongly connected components (SCCs) via `find_nodes_in_scc()`.
-                3. While there are nodes in SCCs or contradictions in `bad_graph`:
+                1. Detect strongly connected components (SCCs) via `find_nodes_in_scc()`.
+                2. While there are nodes in SCCs or contradictions in `bad_graph`:
                     * If handling a cycle:
                         - Automatic mode: remove a random node from the SCC.
                         - Manual mode: ask the user to choose a node with `resolve_cycle_by_user()`.
@@ -342,12 +388,12 @@ class GlobalGraph:
                         - Manual mode: ask the user with `resolve_contradiction_by_user()` whether to
                           remove the node or its neighbors.
                     * Remove chosen nodes via `remove_node()`.
-                4. Recompute SCCs and repeat until no cycles or contradictions remain.
+                3. Recompute SCCs and repeat until no cycles or contradictions remain.
 
         Notes:
-            - The method modifies the graph in place and does not return a value.
-            - Combines all conflict-resolution helpers (`automatic_or_manual`,
-              `resolve_cycle_by_user`, `resolve_contradiction_by_user`, `pick_worst_node`, `remove_node`).
+            - The method modifies the graph in place and returns True when complete.
+            - Combines all conflict-resolution helpers (`resolve_cycle_by_user`, 
+              `resolve_contradiction_by_user`, `pick_worst_node`, `remove_node`).
         """
         # ask for user mode
 
@@ -364,7 +410,7 @@ class GlobalGraph:
                 if automatic:
                     remove_nodes = [random.choice(nodes_part_of_scc)]
                 else:
-                    if node := self.resolve_cycle_by_user(list_of_scc[0]):
+                    if node := self.resolve_cycle_by_user(list_of_scc[0], assertions_dict or {}):
                         remove_nodes = [node]
             else:
                 if automatic:
@@ -374,10 +420,10 @@ class GlobalGraph:
                         remove_nodes = [random.choice(nodes_part_of_scc)]
                 else:
                     if min_node in self.bad_graph:
-                        if des := self.resolve_contradiction_by_user(min_node, list(self.bad_graph[min_node])) is not None:
+                        if des := self.resolve_contradiction_by_user(min_node, list(self.bad_graph[min_node]), assertions_dict or {}) is not None:
                             remove_nodes = [min_node] if des else list(self.bad_graph[min_node])
                     else:
-                        if node := self.resolve_cycle_by_user(list_of_scc[0]):
+                        if node := self.resolve_cycle_by_user(list_of_scc[0], assertions_dict or {}):
                             remove_nodes = [node]
 
             if remove_nodes != []:
@@ -579,6 +625,15 @@ class GlobalGraph:
     def order_the_graph(self) -> None:
         starting_nodes = self.sort_all_children("", self.find_all_starting_nodes())
         self.ordering_assertions(starting_nodes, 0)
+    
+    def get_updated_relationships(self) -> List[Relationship]:
+        """
+        Get the current list of relationships after conflict resolution.
+        
+        Returns:
+            List[Relationship]: Updated list of relationships after node removals.
+        """
+        return self.relationships
 
 test_1 = [
     # Cycle 1: A1 ↔ A2 ↔ A3 ↔ A1 (all contradictions)
