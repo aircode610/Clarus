@@ -6,6 +6,8 @@ import streamlit as st
 from audiorecorder import audiorecorder
 from vosk import Model, KaldiRecognizer
 from pydub import AudioSegment
+
+from faster_whisper import WhisperModel
 import json
 
 @st.cache_resource(show_spinner=False)
@@ -32,6 +34,11 @@ def get_vosk_model(lang_key: str) -> Model:
                         model_dir = cand
                         break
     return Model(model_dir)
+
+def get_whisper_model(lang_key: str):
+    model = WhisperModel("base", device="cpu")
+    segments, info = model.transcribe("sample.wav")
+    return segments
 
 def voice_to_text():
     audio = audiorecorder(
@@ -81,6 +88,74 @@ def voice_to_text():
             st.session_state.transcript = f"{prev}{sep}{new_transcript}"
         else:
             st.session_state.transcript = new_transcript
+
+
+@st.cache_resource(show_spinner=False)
+def load_whisper_model(model_size="small", device="auto", compute_type="int8"):
+    """
+    model_size: tiny | base | small | medium | large-v2 | large-v3 | distil-... (any HF repo supported)
+    device: "cpu", "cuda", "auto"
+    compute_type: "int8", "int8_float16", "float16", "float32" (pick what's supported by your device)
+    """
+    return WhisperModel(model_size, device=device, compute_type=compute_type)
+
+
+def whisper_voice_to_text(
+    lang_key=None,          # e.g., "en", "de", "ru" — faster-whisper will auto-detect if None
+    append_mode=True,
+    insert_newline=True,
+    auto_punct=True,        # unused; Whisper already handles punctuation
+    model_size="small",
+    device="auto",
+    compute_type="int8",
+    beam_size=5,
+    vad_filter=True,
+):
+    audio = audiorecorder(
+        start_prompt="Start recording",
+        stop_prompt="Stop",
+        pause_prompt=None,
+    )
+
+    if "transcript" not in st.session_state:
+        st.session_state.transcript = ""
+
+    if len(audio) > 0:
+        # prepare 16k mono PCM wav bytes (fine for Whisper)
+        seg: AudioSegment = (
+            audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
+        )
+        wav_buf = io.BytesIO()
+        seg.export(wav_buf, format="wav")
+        wav_bytes = wav_buf.getvalue()
+
+        # load/cached faster-whisper model
+        model = load_whisper_model(
+            model_size=model_size,
+            device=device,
+            compute_type=compute_type,
+        )
+
+        # Transcribe. You can also pass a file-like object directly.
+        # language=lang_key pins language; leave None for auto-detect
+        segments, info = model.transcribe(
+            io.BytesIO(wav_bytes),
+            language=lang_key,
+            beam_size=beam_size,
+            vad_filter=vad_filter,
+            word_timestamps=False,  # set True if you need per-word timings
+        )
+
+        # Collect text. Segment.text usually includes leading spaces—concat then strip.
+        new_transcript = "".join(s.text for s in segments).strip()
+
+        if append_mode:
+            prev = st.session_state.get("transcript", "")
+            sep = "\n" if insert_newline and prev and new_transcript else (" " if prev and new_transcript else "")
+            st.session_state.transcript = f"{prev}{sep}{new_transcript}"
+        else:
+            st.session_state.transcript = new_transcript
+
 
 # --- Model registry (small models) ---
 VOSK_MODELS = {
@@ -132,7 +207,7 @@ def main():
     st.subheader("Recorder")
     st.write("Click **Start recording**, speak, then click **Stop**.")
 
-    voice_to_text()
+    whisper_voice_to_text()
 
     st.subheader("Transcript")
     st.text_area("text", label_visibility="collapsed", value=st.session_state.transcript, height=200)
