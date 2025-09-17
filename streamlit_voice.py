@@ -110,17 +110,21 @@ def whisper_voice_to_text(
     compute_type="int8",
     beam_size=5,
     vad_filter=True,
+    start_prompt="🎤",
+    stop_prompt="🛑",
 ):
     audio = audiorecorder(
-        start_prompt="Start recording",
-        stop_prompt="Stop",
+        start_prompt=start_prompt,
+        stop_prompt=stop_prompt,
         pause_prompt=None,
     )
 
     if "transcript" not in st.session_state:
         st.session_state.transcript = ""
 
-    if len(audio) > 0:
+    if len(audio) > 0 and len(audio) != st.session_state.get("record_len", 0):
+        print(len(audio))
+        print(audio)
         # prepare 16k mono PCM wav bytes (fine for Whisper)
         seg: AudioSegment = (
             audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
@@ -155,6 +159,7 @@ def whisper_voice_to_text(
             st.session_state.transcript = f"{prev}{sep}{new_transcript}"
         else:
             st.session_state.transcript = new_transcript
+        st.session_state.record_len = len(audio)
 
 
 # --- Model registry (small models) ---
@@ -210,7 +215,8 @@ def main():
     whisper_voice_to_text()
 
     st.subheader("Transcript")
-    st.text_area("text", label_visibility="collapsed", value=st.session_state.transcript, height=200)
+    st.text_area("text", label_visibility="collapsed", key="transcript", height=200)
+    print(st.session_state.transcript)
 
     st.info("Tip: If your mic access is blocked by the browser, allow microphone permissions and reload the page.")
 

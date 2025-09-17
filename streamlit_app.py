@@ -115,16 +115,23 @@ def idea_capture_tab():
                     st.markdown(message["content"])
         
         # Chat input
-        if "transcript" not in st.session_state:
+        if "transcript" not in st.session_state or st.session_state.transcript is None:
             st.session_state.transcript = ""
 
-        streamlit_voice.voice_to_text()
-        st.text_area("Share your ideas, thoughts, or feedback...", value=st.session_state.transcript)
+        if st.session_state.get("message_sent", False):
+            st.session_state.transcript = ""
+            st.session_state.message_sent = False
 
-        if st.button("Send", help="Send your input to Clarus"):
+        streamlit_voice.whisper_voice_to_text(
+            start_prompt="🎤 Voice Input",
+            stop_prompt="🛑 Stop Recording",
+        )
+        # st.text_area("text", label_visibility="collapsed", key="transcript", height=200)
+        # st.chat_input("Your thoughts and ideas", key="transcript")
+
+        if prompt := st.chat_input("Your thoughts and ideas", key="transcript"):
             # Add user message to chat
-            prompt = st.session_state.transcript
-            st.session_state.transcript = ""
+            st.session_state.message_sent = True
             st.session_state.messages.append({"role": "user", "content": prompt})
             
             # Display user message
