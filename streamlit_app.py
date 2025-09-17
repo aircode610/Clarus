@@ -15,7 +15,9 @@ import json
 from typing import List, Dict, Any
 
 import streamlit_voice
-from models import Assertion
+import conflict_resolving
+from conflict_resolving import GlobalGraph
+from models import Assertion, Relationship
 from app import ClarusApp, create_clarus_app
 from structure import evaluate_relationship_quality
 
@@ -177,6 +179,7 @@ def idea_capture_tab():
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.error(error_msg)
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
+            st.rerun()
     
     with col2:
         st.subheader("📝 Extracted Assertions")
@@ -264,7 +267,8 @@ def structure_tab():
         st.markdown("---")
         st.subheader("🎛️ Graph Controls")
         
-        col1, col2, col3 = st.columns(3)
+        # col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown("**View Options**")
@@ -925,7 +929,55 @@ def review_tab():
     """Review mode - Flag potential issues."""
     st.header("🔍 Review Mode")
     st.markdown("Review your assertions for potential issues like missing justification, vague language, or unclear logical flow.")
-    
+
+    if not st.session_state.get("global_graph", None):
+        st.session_state.global_graph = GlobalGraph(st.session_state.get("relationships", []))
+
+    if st.session_state.get("chose_method", False):
+        if st.session_state.global_graph.resolve_cycles_and_conflicts(st.session_state.automatic_method):
+            st.text("All conflicts have been resolved")
+            if not st.session_state.get("ordered_graph", False):
+                print("False")
+                st.session_state.global_graph.order_the_graph()
+                st.session_state.ordered_graph = st.session_state.global_graph.ordered_graph
+                for assertion in st.session_state.assertions:
+                    if assertion.id not in st.session_state.ordered_graph:
+                        st.session_state.ordered_graph.append(assertion.id)
+
+                st.session_state.result_text = ""
+
+                assertion_dictionary = {}
+                for assertion in st.session_state.assertions:
+                    assertion_dictionary[assertion.id] = assertion.content
+
+                for id in st.session_state.ordered_graph:
+                    satellite = False
+                    nucleus = False
+                    for rel in st.session_state.global_graph.relationships:
+                        if rel.assertion1_id == id:
+                            satellite = True
+                        if rel.assertion2_id == id:
+                            nucleus = True
+                            st.session_state.result_text += (f"The following assertion: \"{assertion_dictionary[rel.assertion1_id]}\" is a "
+                                                             f"{rel.relationship_type} for this assertion: \"{assertion_dictionary[id]}\"\n")
+                    if not nucleus and not satellite:
+                        st.session_state.result_text += f"The assertion: \"{assertion_dictionary[id]}\" is a separate idea\n"
+            st.text_area("Graph has been ordered", key="result_text")
+
+            # for rel in st.session_state.global_graph.relationships:
+            #     st.write(rel.assertion1_id, rel.relationship_type, rel.assertion2_id)
+        elif st.session_state.automatic_method:
+            st.rerun()
+    else:
+        if st.button("Manual"):
+            st.session_state.automatic_method = False
+            st.session_state.chose_method = True
+            st.rerun()
+        if st.button("Automatic"):
+            st.session_state.automatic_method = True
+            st.session_state.chose_method = True
+            st.rerun()
+
     st.info("🚧 Review mode is coming soon! This will flag potential issues in your assertions.")
     
     # Next button to go to Prose mode

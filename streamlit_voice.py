@@ -128,8 +128,8 @@ def whisper_voice_to_text(
         st.session_state.transcript = ""
 
     if len(audio) > 0 and len(audio) != st.session_state.get("record_len", 0):
-        print(len(audio))
-        print(audio)
+        # print(len(audio))
+        # print(audio)
         # prepare 16k mono PCM wav bytes (fine for Whisper)
         seg: AudioSegment = (
             audio.set_frame_rate(16000).set_channels(1).set_sample_width(2)
@@ -158,6 +158,7 @@ def whisper_voice_to_text(
         # Collect text. Segment.text usually includes leading spaces—concat then strip.
         new_transcript = "".join(s.text for s in segments).strip()
 
+        # print(st.session_state.transcript, new_transcript)
         if append_mode:
             prev = st.session_state.get("transcript", "")
             sep = "\n" if insert_newline and prev and new_transcript else (" " if prev and new_transcript else "")
