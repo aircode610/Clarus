@@ -1,3 +1,4 @@
+from functools import cmp_to_key
 from typing import List, Tuple
 import random
 
@@ -43,8 +44,8 @@ class GlobalGraph:
 
         for rel in relationships:
             rel_type = getattr(rel, "relationship_type", None)
-            if rel_type == "contrast":
-                contrast_relations.append(rel)
+            if rel_type == "contradiction":
+                contradiction_relations.append(rel)
             else:
                 other_relations.append(rel)
 
@@ -110,12 +111,13 @@ class GlobalGraph:
         #TODO should ask user if they want to delete it or its neighbors
         pass
 
-    def automatic_or_manual(self):
+    def automatic_or_manual(self) -> bool:
         #TODO ask user if they want to resolve conflicts automatically or manually
         pass
 
-    def remove_node(self, node):
-        self.nodes.remove(node)
+    def remove_node(self, node) -> None:
+        self.nodes.discard(node)
+        self.contradiction_nodes.discard(node)
         self.graph.pop(node, None)
         for other_node in self.graph:
             self.graph[other_node].discard(node)
@@ -130,7 +132,7 @@ class GlobalGraph:
                 self.relationships.remove(relation)
 
 
-    def pick_worst_node(self, nodes_part_of_scc):
+    def pick_worst_node(self, nodes_part_of_scc) -> str:
         min_score = 100000000
         min_node: str | None = None
         for node in self.nodes:
@@ -138,7 +140,7 @@ class GlobalGraph:
                 continue
             if node not in self.contrast_graph:
                 continue
-            score = len(self.graph[node]) - 2 * len(self.contrast_graph[node])
+            score = len(self.graph[node]) - len(self.contradiction_graph[node])
             if score < min_score:
                 min_score = score
                 min_node = node
@@ -180,3 +182,58 @@ class GlobalGraph:
 
             list_of_scc = self.find_nodes_in_scc()
             nodes_part_of_scc = self.find_nodes_in_scc()
+
+    def find_all_ancestors(self) -> None:
+        for node in self.nodes:
+            for child in self.graph[node]:
+                self.reverse_graph.setdefault(child, set()).add(node)
+
+    def find_all_starting_nodes(self) -> List[str]:
+        starter_nodes = []
+        for node in self.nodes:
+            if len(self.reverse_graph[node]) == 0:
+                starter_nodes.append(node)
+        return starter_nodes
+
+    def check_used_all_parents(self, node) -> bool:
+        return self.number_of_visited_parents[node] == len(self.reverse_graph[node])
+
+    def compare_two_relations(self, relation1: Relationship, relation2: Relationship) -> bool:
+        relation_type1 = relation1.gettattr("relationship_type", None)
+        relation_type2 = relation2.gettattr("relationship_type", None)
+        weights = {"cause": 0, "condition": 1, "evidence": 2, "contrast": 3, "background": 4}
+        if weights[relation_type1] != weights[relation_type2]:
+            return weights[relation_type1] < weights[relation_type2]
+        else:
+            #TODO ask which one is better from Amirali the LLM
+            return True
+
+    def sort_all_children(self, parent_id: str, children : List[str]) -> List[str]:
+        def comparison(node1: str, node2: str) -> bool:
+            relation1 = self.relationship_for_pair.get((parent_id, node1))
+            relation2 = self.relationship_for_pair.get((parent_id, node2))
+            if relation1 is None or relation2 is None:
+                return True
+            return self.compare_two_relations(relation1, relation2)
+
+        return sorted(children, key=cmp_to_key(comparison))
+
+    def get_valid_children(self, node: str) -> List[str]:
+        children = []
+        for child in self.graph[node]:
+            self.number_of_visited_parents[child] += 1
+            if self.check_used_all_parents(child):
+                children.append(child)
+        return children
+
+    def layer(self, lst: List[str]):
+        for node in lst:
+            self.ordered_graph.append(node)
+            children = self.get_valid_children(node)
+            sorted_children = self.sort_all_children(node, children)
+            self.layer(sorted_children)
+
+    def order_the_graph(self):
+        starting_nodes = self.sort_all_children(self.find_all_starting_nodes())
+        self.layer(starting_nodes)
+        return self.ordered_graph
