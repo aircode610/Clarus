@@ -1,6 +1,7 @@
 from functools import cmp_to_key
 from typing import List, Tuple
 import random
+import streamlit as st
 
 from structure import Relationship
 
@@ -164,8 +165,10 @@ class GlobalGraph:
         Description:
             - Prompts the user (or external agent) to decide which node to remove.
         """
-        #TODO should send cycle to user and get user's decision node
-        pass
+        st.text("Cycle detected: " + " -> ".join(cycle))
+        st.text("Please select a node to delete from the cycle.")
+        node = st.selectbox("Node to delete", cycle)
+        return node if st.button("Resolve cycle") else None
 
     def resolve_contradiction_by_user(self, node: str, other_nodes: List[str]) -> bool:
         """
@@ -185,8 +188,11 @@ class GlobalGraph:
                 * Keep `other_nodes` and delete `node`, or
                 * Keep `node` and delete all `other_nodes`.
         """
-        #TODO should ask user if they want to delete it or its neighbors
-        pass
+        st.text("Contradiction detected: " + node)
+        st.text("Please select a node to delete from the contradiction.")
+        if st.button(node): return True
+        if st.button("; ".join(other_nodes)): return False
+        return None
 
     def automatic_or_manual(self) -> bool:
         """
@@ -207,8 +213,10 @@ class GlobalGraph:
                 * Automatic: Conflicts will be resolved programmatically without further user input.
             - Provides a global setting that controls whether methods like resolve_cycle_by_user or resolve_contradiction_by_user will be used later.
         """
-        #TODO ask user if they want to resolve conflicts automatically or manually
-        return True
+        st.text("Would you like to resolve conflicts automatically or manually?")
+        if st.button("Manual"): return False
+        if st.button("Automatic"): return True
+        return None
 
     def remove_node(self, node: str) -> None:
         """
@@ -303,18 +311,18 @@ class GlobalGraph:
         if min_node is None:
             for node in self.nodes:
                 if node in self.bad_graph:
-                    score = len(self.good_graph_1[node]) + len(self.good_graph_2[node]) - len(self.bad_graph.get(node, set()))
+                    score = len(self.good_graph_1.get(node, set())) + len(self.good_graph_2.get(node, set())) - len(self.bad_graph.get(node, set()))
                     if score < min_score:
                         min_score = score
                         min_node = node
         return min_node
 
-    def resolve_cycles_and_conflicts(self) -> None:
+    def resolve_cycles_and_conflicts(self, automatic) -> bool:
         """
         Resolve cycles and contradictions in the graph using either automatic or manual mode.
 
         Args:
-            None
+            - automatic (bool): whether to use automatic mode or manual mode.
 
         Returns:
             None
@@ -342,31 +350,42 @@ class GlobalGraph:
               `resolve_cycle_by_user`, `resolve_contradiction_by_user`, `pick_worst_node`, `remove_node`).
         """
         # ask for user mode
-        automatic = self.automatic_or_manual()
 
         list_of_scc = self.find_nodes_in_scc()
         nodes_part_of_scc = [node for sublist in list_of_scc for node in sublist]
-        while len(nodes_part_of_scc) > 0 or len(self.bad_graph) > 0:
+        solved = True
+
+        if len(nodes_part_of_scc) > 0 or len(self.bad_graph) > 0:
+            solved = False
             min_node = self.pick_worst_node(nodes_part_of_scc)
-            if self.bad_graph is None:
+            remove_nodes = []
+
+            if self.bad_graph == {}:
                 if automatic:
                     remove_nodes = [random.choice(nodes_part_of_scc)]
                 else:
-                    remove_nodes = [self.resolve_cycle_by_user(list_of_scc[0])]
+                    if node := self.resolve_cycle_by_user(list_of_scc[0]):
+                        remove_nodes = [node]
             else:
                 if automatic:
-                    remove_nodes = [min_node]
-                else:
-                    if self.resolve_contradiction_by_user(min_node, list(self.bad_graph[min_node])):
+                    if min_node in self.bad_graph:
                         remove_nodes = [min_node]
                     else:
-                        remove_nodes = list(self.bad_graph[min_node])
+                        remove_nodes = [random.choice(nodes_part_of_scc)]
+                else:
+                    if min_node in self.bad_graph:
+                        if des := self.resolve_contradiction_by_user(min_node, list(self.bad_graph[min_node])) is not None:
+                            remove_nodes = [min_node] if des else list(self.bad_graph[min_node])
+                    else:
+                        if node := self.resolve_cycle_by_user(list_of_scc[0]):
+                            remove_nodes = [node]
 
-            for node in remove_nodes:
-                self.remove_node(node)
+            if remove_nodes != []:
+                for node in remove_nodes:
+                    self.remove_node(node)
+                st.rerun()
 
-            list_of_scc = self.find_nodes_in_scc()
-            nodes_part_of_scc = [node for sublist in list_of_scc for node in sublist]
+        return solved
 
     def find_all_starting_nodes(self) -> List[str]:
         """
