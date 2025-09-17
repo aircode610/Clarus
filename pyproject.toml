@@ -1,0 +1,24 @@
+[project]
+name = "Clarus"
+description = "Clarus"
+authors = [{name = "JetBrains"}]
+version = "0.0.1"
+readme = "README.md"
+dynamic = ["dependencies"]
+requires-python = ">=3.10,<3.11.0 || >3.11.0,<3.13"
+
+[tool.poetry.group.dev.dependencies]
+acl-anthology = "^0.5.3"
+
+[tool.poetry.dependencies]
+numpy = "2.0"
+pandas = "^2.3.2"
+grazie-api-gateway-client = "^0.3.3"
+unsloth = "2025.8.1"
+textdistance = "^4.6.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
