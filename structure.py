@@ -18,6 +18,106 @@ import json
 from models import Assertion, Relationship, StructureState
 
 
+def evaluate_relationship_quality(assertion1_content: str, assertion2_content: str, relationship_type: str) -> tuple[int, str, str]:
+    """
+    Evaluate the quality of a relationship using LLM.
+    
+    Args:
+        assertion1_content: Content of the first assertion
+        assertion2_content: Content of the second assertion
+        relationship_type: Type of relationship (evidence, background, cause, contrast, condition)
+    
+    Returns:
+        tuple: (confidence_score, reason, suggestion) where:
+            - confidence_score is 0-100
+            - reason is a short explanation of why it's good or bad
+            - suggestion is one of: "ADD", "MODIFY", "REMOVE"
+    """
+    try:
+        # Initialize LLM
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+        
+        # Create evaluation prompt
+        prompt = f"""
+You are an expert at analyzing relationships between assertions in academic and analytical writing. 
+Evaluate the quality of the proposed relationship between these two assertions.
+
+Assertion 1: "{assertion1_content}"
+Assertion 2: "{assertion2_content}"
+Proposed Relationship Type: {relationship_type}
+
+Relationship Types:
+- evidence: One assertion provides evidence, examples, or support for another
+- background: One assertion provides context, setting, or foundational information for another
+- cause: One assertion directly causes or leads to another
+- contrast: Assertions present opposing viewpoints, contradictions, or different perspectives
+- condition: One assertion is a prerequisite or condition for another
+
+Rate this relationship on a scale of 0-100 and provide structured feedback.
+
+Be strict but fair in your evaluation. Consider:
+1. Logical coherence of the relationship
+2. Strength of the connection
+3. Clarity of the relationship type
+4. Whether the assertions actually relate in the proposed way
+
+Respond in this exact format:
+CONFIDENCE: [0-100]
+REASON: [One short sentence explaining why it's good or bad]
+SUGGESTION: [One of: "ADD" if good, "MODIFY to [relationship_type]" if needs different relationship type, "REMOVE" if poor]
+
+Examples of good relationships:
+- Evidence: "AI can detect cancer" → "AI is useful in healthcare" (CONFIDENCE: 85-95, SUGGESTION: ADD)
+- Cause: "Increased CO2 levels" → "Global warming" (CONFIDENCE: 90-100, SUGGESTION: ADD)
+- Contrast: "AI will replace humans" vs "AI will augment humans" (CONFIDENCE: 80-95, SUGGESTION: ADD)
+
+Examples of relationships needing modification:
+- "AI algorithms improved" → "AI use in healthcare increased" (CONFIDENCE: 60-70, SUGGESTION: MODIFY to cause)
+- "Some studies show benefits" → "Technology is advancing" (CONFIDENCE: 40-60, SUGGESTION: MODIFY to evidence)
+
+Examples of poor relationships:
+- "It's sunny today" → "Technology is advancing" (CONFIDENCE: 0-20, SUGGESTION: REMOVE)
+- "Apples are red" vs "Oranges are orange" (CONFIDENCE: 10-30, SUGGESTION: REMOVE)
+"""
+
+        # Get LLM response
+        response = llm.invoke([HumanMessage(content=prompt)])
+        response_text = response.content
+        
+        # Parse response
+        confidence = 50  # Default
+        reason = "Unable to evaluate relationship quality."
+        suggestion = "MODIFY"
+        
+        if "CONFIDENCE:" in response_text and "REASON:" in response_text and "SUGGESTION:" in response_text:
+            try:
+                confidence_line = [line for line in response_text.split('\n') if 'CONFIDENCE:' in line][0]
+                confidence = int(confidence_line.split('CONFIDENCE:')[1].strip())
+                confidence = max(0, min(100, confidence))  # Clamp between 0-100
+                
+                reason_line = [line for line in response_text.split('\n') if 'REASON:' in line][0]
+                reason = reason_line.split('REASON:')[1].strip()
+                
+                suggestion_line = [line for line in response_text.split('\n') if 'SUGGESTION:' in line][0]
+                suggestion = suggestion_line.split('SUGGESTION:')[1].strip().upper()
+                
+                # Parse suggestion and extract relationship type if MODIFY
+                if suggestion.startswith('MODIFY TO '):
+                    # Extract the suggested relationship type
+                    suggested_type = suggestion.replace('MODIFY TO ', '').strip()
+                    suggestion = f"MODIFY to {suggested_type}"
+                elif suggestion not in ['ADD', 'REMOVE']:
+                    suggestion = 'MODIFY'
+                    
+            except (ValueError, IndexError):
+                pass
+        
+        return confidence, reason, suggestion
+        
+    except Exception as e:
+        return 50, f"Error evaluating relationship: {str(e)}", "MODIFY"
+
+
 class StructureWorkflow:
     """Main workflow class for Structure mode."""
     

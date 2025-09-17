@@ -10,6 +10,7 @@ import json
 from typing import List, Dict, Any
 from models import Assertion
 from app import ClarusApp, create_clarus_app
+from structure import evaluate_relationship_quality
 
 # Page configuration
 st.set_page_config(
@@ -611,15 +612,26 @@ def structure_tab():
         left_col, right_col = st.columns([1, 1])
         
         with left_col:
-            st.markdown("#### Selection")
+            if 'edit_relationship' in st.session_state:
+                st.markdown("#### ✏️ Editing Relationship")
+                st.info("You are currently editing a relationship. Make your changes and click Add/Change to save.")
+            else:
+                st.markdown("#### Selection")
             
             # First assertion selector
             assertion1_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
                                 for a in st.session_state.assertions}
+            
+            # Pre-fill if editing an existing relationship
+            default_assertion1 = None
+            if 'edit_relationship' in st.session_state:
+                default_assertion1 = st.session_state['edit_relationship']['assertion1']
+            
             selected_assertion1 = st.selectbox(
                 "First Assertion",
                 options=list(assertion1_options.keys()),
                 format_func=lambda x: assertion1_options[x],
+                index=list(assertion1_options.keys()).index(default_assertion1) if default_assertion1 and default_assertion1 in assertion1_options else 0,
                 key="manage_rel_assertion1",
                 help="Select the first assertion"
             )
@@ -635,9 +647,15 @@ def structure_tab():
             }
             relationship_options = {rt: relationship_labels[rt] for rt in relationship_types}
             
+            # Pre-fill if editing an existing relationship
+            default_relationship = None
+            if 'edit_relationship' in st.session_state:
+                default_relationship = st.session_state['edit_relationship']['type']
+            
             selected_relationship = st.selectbox(
                 "Relationship Type",
                 options=list(relationship_options.keys()),
+                index=relationship_types.index(default_relationship) if default_relationship and default_relationship in relationship_types else 0,
                 key="manage_rel_type",
                 help="Select the type of relationship"
             )
@@ -645,42 +663,109 @@ def structure_tab():
             # Second assertion selector
             assertion2_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
                                 for a in st.session_state.assertions}
+            
+            # Pre-fill if editing an existing relationship
+            default_assertion2 = None
+            if 'edit_relationship' in st.session_state:
+                default_assertion2 = st.session_state['edit_relationship']['assertion2']
+            
             selected_assertion2 = st.selectbox(
                 "Second Assertion",
                 options=list(assertion2_options.keys()),
                 format_func=lambda x: assertion2_options[x],
+                index=list(assertion2_options.keys()).index(default_assertion2) if default_assertion2 and default_assertion2 in assertion2_options else 0,
                 key="manage_rel_assertion2",
                 help="Select the second assertion"
             )
             
+            # Real-time evaluation when dropdowns change
+            if selected_assertion1 and selected_assertion2:
+                assertion1_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion1), None)
+                assertion2_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion2), None)
+                
+                if assertion1_obj and assertion2_obj:
+                    # Create a unique key for this combination to cache evaluation
+                    evaluation_key = f"eval_{selected_assertion1}_{selected_assertion2}_{selected_relationship}"
+                    
+                    # Check if we already evaluated this combination
+                    if evaluation_key not in st.session_state:
+                        with st.spinner("Evaluating relationship quality..."):
+                            confidence, reason, suggestion = evaluate_relationship_quality(
+                                assertion1_obj.content, 
+                                assertion2_obj.content, 
+                                selected_relationship
+                            )
+                        st.session_state[evaluation_key] = (confidence, reason, suggestion)
+                    else:
+                        confidence, reason, suggestion = st.session_state[evaluation_key]
+                    
+                    # Display evaluation results
+                    st.markdown("**Relationship Quality Evaluation:**")
+                    
+                    # Color code based on confidence and suggestion
+                    if suggestion == "ADD":
+                        st.success(f"✅ **{confidence}%** - {reason}")
+                        st.info("💡 **Suggestion:** Add this relationship")
+                    elif suggestion.startswith("MODIFY to"):
+                        st.warning(f"⚠️ **{confidence}%** - {reason}")
+                        st.info(f"💡 **Suggestion:** {suggestion}")
+                    else:  # REMOVE
+                        st.error(f"❌ **{confidence}%** - {reason}")
+                        st.info("💡 **Suggestion:** Remove this relationship")
+            
             # Add/Change button
             if st.button("➕ Add/Change", key="manage_relationship_btn", help="Add new or modify existing relationship", use_container_width=True):
-                # Check if relationship already exists
-                existing_rel = None
-                for rel in st.session_state.relationships:
-                    if ((rel.assertion1_id == selected_assertion1 and rel.assertion2_id == selected_assertion2) or
-                        (rel.assertion1_id == selected_assertion2 and rel.assertion2_id == selected_assertion1)):
-                        existing_rel = rel
-                        break
+                # Get assertion objects
+                assertion1_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion1), None)
+                assertion2_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion2), None)
                 
-                if existing_rel:
-                    # Update existing relationship
-                    existing_rel.relationship_type = selected_relationship
-                    existing_rel.explanation = f"{selected_relationship} relationship between assertions"
-                    st.success("Relationship updated successfully!")
-                else:
-                    # Create new relationship
-                    from models import Relationship
-                    new_rel = Relationship(
-                        assertion1_id=selected_assertion1,
-                        assertion2_id=selected_assertion2,
-                        relationship_type=selected_relationship,
-                        confidence=0.8,
-                        explanation=f"{selected_relationship} relationship between assertions"
-                    )
-                    st.session_state.relationships.append(new_rel)
-                    st.success("Relationship added successfully!")
-                st.rerun()
+                if assertion1_obj and assertion2_obj:
+                    # Get the cached evaluation results
+                    evaluation_key = f"eval_{selected_assertion1}_{selected_assertion2}_{selected_relationship}"
+                    if evaluation_key in st.session_state:
+                        confidence, reason, suggestion = st.session_state[evaluation_key]
+                        
+                        # Ask for confirmation based on suggestion
+                        if suggestion == "REMOVE":
+                            st.warning("⚠️ The LLM suggests removing this relationship. Are you sure you want to add it?")
+                            if not st.button("Yes, Add Anyway", key="confirm_remove"):
+                                st.stop()
+                        elif suggestion.startswith("MODIFY to"):
+                            st.warning("⚠️ The LLM suggests modifying this relationship. Are you sure you want to add it as-is?")
+                            if not st.button("Yes, Add Anyway", key="confirm_modify"):
+                                st.stop()
+                        
+                        # Check if relationship already exists
+                        existing_rel = None
+                        for rel in st.session_state.relationships:
+                            if ((rel.assertion1_id == selected_assertion1 and rel.assertion2_id == selected_assertion2) or
+                                (rel.assertion1_id == selected_assertion2 and rel.assertion2_id == selected_assertion1)):
+                                existing_rel = rel
+                                break
+                        
+                        if existing_rel:
+                            # Update existing relationship
+                            existing_rel.relationship_type = selected_relationship
+                            existing_rel.confidence = confidence / 100.0  # Convert to 0-1 scale
+                            existing_rel.explanation = f"{selected_relationship} relationship between assertions. LLM Evaluation: {reason} (Suggestion: {suggestion})"
+                            st.success("Relationship updated successfully!")
+                        else:
+                            # Create new relationship
+                            from models import Relationship
+                            new_rel = Relationship(
+                                assertion1_id=selected_assertion1,
+                                assertion2_id=selected_assertion2,
+                                relationship_type=selected_relationship,
+                                confidence=confidence / 100.0,  # Convert to 0-1 scale
+                                explanation=f"{selected_relationship} relationship between assertions. LLM Evaluation: {reason} (Suggestion: {suggestion})"
+                            )
+                            st.session_state.relationships.append(new_rel)
+                            st.success("Relationship added successfully!")
+                        
+                        # Clear edit state after successful operation
+                        if 'edit_relationship' in st.session_state:
+                            del st.session_state['edit_relationship']
+                        st.rerun()
         
         with right_col:
             st.markdown("#### Interactive Preview")
@@ -726,156 +811,6 @@ def structure_tab():
     else:
         st.info("You need at least 2 assertions to create relationships.")
     
-    # Show all existing relationships
-    st.markdown("---")
-    st.subheader("📋 All Relationships")
-    
-    if st.session_state.relationships:
-        # Add filters
-        st.markdown("#### Filters")
-        filter_col1, filter_col2 = st.columns(2)
-        
-        with filter_col1:
-            # Relationship type filter
-            relationship_types = ["All", "evidence", "background", "cause", "contrast", "condition"]
-            selected_relationship_filter = st.selectbox(
-                "Filter by Relationship Type",
-                options=relationship_types,
-                index=0,
-                key="relationship_type_filter",
-                help="Select relationship type to display"
-            )
-        
-        with filter_col2:
-            # Assertion filter
-            assertion_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
-                               for a in st.session_state.assertions}
-            assertion_filter_options = ["All"] + list(assertion_options.keys())
-            selected_assertion_filter = st.selectbox(
-                "Filter by Assertion",
-                options=assertion_filter_options,
-                format_func=lambda x: "All" if x == "All" else assertion_options[x],
-                index=0,
-                key="assertion_filter",
-                help="Select assertion to include in relationships"
-            )
-        
-        # Filter relationships based on selected filters
-        filtered_relationships = []
-        for i, rel in enumerate(st.session_state.relationships):
-            # Check relationship type filter
-            if selected_relationship_filter != "All" and rel.relationship_type != selected_relationship_filter:
-                continue
-            
-            # Check assertion filter
-            if selected_assertion_filter != "All":
-                if rel.assertion1_id != selected_assertion_filter and rel.assertion2_id != selected_assertion_filter:
-                    continue
-            
-            filtered_relationships.append((i, rel))
-        
-        if filtered_relationships:
-            for list_idx, (rel_idx, rel) in enumerate(filtered_relationships):
-                assertion1 = assertions_dict.get(rel.assertion1_id)
-                assertion2 = assertions_dict.get(rel.assertion2_id)
-                
-                if assertion1 and assertion2:
-                    assertion1_num = st.session_state.assertions.index(assertion1) + 1
-                    assertion2_num = st.session_state.assertions.index(assertion2) + 1
-                    
-                    # Highlight for selected relationships
-                    is_highlighted = st.session_state.get('scroll_to_relationship') == rel_idx
-                    if is_highlighted:
-                        st.markdown(f"### 🎯 Relationship {rel_idx + 1} (Selected from Graph)")
-                        if 'scroll_to_relationship' in st.session_state:
-                            del st.session_state['scroll_to_relationship']
-                        st.markdown("""
-                        <div style="background-color: rgba(255, 215, 0, 0.2); padding: 10px; border-radius: 5px; border-left: 4px solid #FFD700;">
-                        """, unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"### Relationship {rel_idx + 1}")
-                    
-                    # Create two main columns: left for relationship, right for explanation and actions
-                    left_col, right_col = st.columns([3, 2])
-                    
-                    with left_col:
-                        st.markdown("**Relationship:**")
-                        
-                        # Editable relationship interface in a more compact layout
-                        rel_col1, rel_col2, rel_col3 = st.columns([2, 1, 2])
-                        
-                        with rel_col1:
-                            # First assertion dropdown
-                            assertion1_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
-                                                for a in st.session_state.assertions}
-                            new_assertion1 = st.selectbox(
-                                "From",
-                                options=list(assertion1_options.keys()),
-                                format_func=lambda x: assertion1_options[x],
-                                index=list(assertion1_options.keys()).index(rel.assertion1_id),
-                                key=f"edit_rel_{rel_idx}_assertion1",
-                                help="Select the first assertion"
-                            )
-                        
-                        with rel_col2:
-                            # Relationship type dropdown
-                            relationship_types = ["evidence", "background", "cause", "contrast", "condition"]
-                            new_relationship_type = st.selectbox(
-                                "Type",
-                                options=relationship_types,
-                                index=relationship_types.index(rel.relationship_type),
-                                key=f"edit_rel_{rel_idx}_type",
-                                help="Select relationship type"
-                            )
-                        
-                        with rel_col3:
-                            # Second assertion dropdown
-                            assertion2_options = {f"{a.id}": f"Assertion {st.session_state.assertions.index(a) + 1}: {a.content}" 
-                                                for a in st.session_state.assertions}
-                            new_assertion2 = st.selectbox(
-                                "To",
-                                options=list(assertion2_options.keys()),
-                                format_func=lambda x: assertion2_options[x],
-                                index=list(assertion2_options.keys()).index(rel.assertion2_id),
-                                key=f"edit_rel_{rel_idx}_assertion2",
-                                help="Select the second assertion"
-                            )
-                        
-                        # Action buttons
-                        action_col1, action_col2 = st.columns(2)
-                        
-                        with action_col1:
-                            if st.button("💾 Save", key=f"save_rel_{rel_idx}", help="Save changes", use_container_width=True):
-                                # Update the relationship
-                                rel.assertion1_id = new_assertion1
-                                rel.assertion2_id = new_assertion2
-                                rel.relationship_type = new_relationship_type
-                                rel.explanation = f"{new_relationship_type} relationship between assertions"
-                                st.success("Relationship updated!")
-                                st.rerun()
-                        
-                        with action_col2:
-                            if st.button("🗑️ Delete", key=f"delete_rel_{rel_idx}", help="Delete this relationship", use_container_width=True):
-                                st.session_state.relationships.remove(rel)
-                                st.rerun()
-                    
-                    with right_col:
-                        st.markdown("**Explanation:**")
-                        
-                        # Display explanation as read-only
-                        if rel.explanation:
-                            st.info(rel.explanation)
-                        else:
-                            st.info("No explanation provided")
-                    
-                    if is_highlighted:
-                        st.markdown("</div>", unsafe_allow_html=True)
-                    
-                    st.markdown("---")
-        else:
-            st.info("No relationships match the selected filters.")
-    else:
-        st.info("No relationships created yet. Use the interface above to create relationships between assertions.")
     
     
     # Action buttons at the bottom
