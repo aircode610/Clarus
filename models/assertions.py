@@ -20,7 +20,7 @@ class Relationship(BaseModel):
     """Represents a relationship between two assertions."""
     assertion1_id: str = Field(description="ID of the first assertion")
     assertion2_id: str = Field(description="ID of the second assertion")
-    relationship_type: Literal["evidence", "background", "cause", "contrast", "condition"] = Field(
+    relationship_type: Literal["evidence", "background", "cause", "contradiction", "condition"] = Field(
         description="Type of relationship between the assertions"
     )
     confidence: float = Field(description="Confidence score (0-1) for this relationship")
