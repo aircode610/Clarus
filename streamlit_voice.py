@@ -16,8 +16,8 @@ st.caption("Press **Start**, speak, then **Stop**. Your speech is transcribed to
 VOSK_MODELS = {
     "English (en-US)": {
         "code": "en-us",
-        "url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
-        "dirname": "vosk-model-small-en-us-0.15",
+        "url": "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22-lgraph.zip",
+        "dirname": "vosk-model-en-us-0.22-lgraph",
     },
     "German (de)": {
         "code": "de",
