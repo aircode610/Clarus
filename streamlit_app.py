@@ -179,6 +179,7 @@ def idea_capture_tab():
                         error_msg = f"Sorry, I encountered an error: {str(e)}"
                         st.error(error_msg)
                         st.session_state.messages.append({"role": "assistant", "content": error_msg})
+            st.rerun()
     
     with col2:
         st.subheader("📝 Extracted Assertions")
@@ -266,7 +267,8 @@ def structure_tab():
         st.markdown("---")
         st.subheader("🎛️ Graph Controls")
         
-        col1, col2, col3 = st.columns(3)
+        # col1, col2, col3 = st.columns(3)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown("**View Options**")
@@ -929,7 +931,7 @@ def review_tab():
     st.markdown("Review your assertions for potential issues like missing justification, vague language, or unclear logical flow.")
 
     if not st.session_state.get("global_graph", None):
-        st.session_state.global_graph = GlobalGraph(conflict_resolving.test_2)
+        st.session_state.global_graph = GlobalGraph(st.session_state.get("relationships", []))
 
     if st.session_state.get("chose_method", False):
         if st.session_state.global_graph.resolve_cycles_and_conflicts(st.session_state.automatic_method):
