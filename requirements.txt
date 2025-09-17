@@ -31,3 +31,8 @@ streamlit-audiorecorder==0.0.4
 vosk==0.3.44
 pydub==0.25.1
 requests==2.32.3
+
+# Graph visualization
+networkx>=3.0
+matplotlib>=3.7.0
+plotly>=5.0.0

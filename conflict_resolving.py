@@ -1,16 +1,22 @@
+from functools import cmp_to_key
 from typing import List, Tuple
 import random
 
 from structure import Relationship
 
 class GlobalGraph:
-    """A helper to maintain global graphs of relationships and contrasts."""
+    """A helper to maintain global graphs of relationships and contradictions."""
     def __init__(self, relationships: List[Relationship]) -> None:
         """Initialize graphs from provided relationships."""
+        self.relationship_for_pair: dict[Tuple[str, str], Relationship] = {}
         self.relationships: List[Relationship] = relationships
-        self.graph, self.nodes = self.initialize_graph(relationships)
-        self.contrast_relations, self.other_relations = self.split_relationships_by_contrast(relationships)
-        self.contrast_graph = self.initialize_graph(self.contrast_relations)[0]
+        self.contradiction_relations, self.other_relations = self.split_relationships_by_contradiction(relationships)
+        self.graph, _ = self.initialize_graph(self.other_relations)
+        _, self.nodes = self.initialize_graph(self.relationships)
+        self.contradiction_graph, self.contradiction_nodes = self.initialize_graph(self.contradiction_relations)
+        self.reverse_graph: dict[str, set[str]] = {}
+        self.number_of_visited_parents: dict[str, int] = {}
+        self.ordered_graph: List[str] = []
 
     def initialize_graph(self, relationships: List[Relationship]) -> tuple[dict[str, set[str]], set[str]]:
         """Build adjacency map and node set from relationships."""
@@ -25,30 +31,30 @@ class GlobalGraph:
             nodes.add(v)
             graph.setdefault(u, set()).add(v)
             graph.setdefault(v, set())
-
+            self.relationship_for_pair[(u, v)] = rel
         return graph, nodes
 
 
-    def split_relationships_by_contrast(self, relationships: List[Relationship]) -> Tuple[list[Relationship], list[Relationship]]:
+    def split_relationships_by_contradiction(self, relationships: List[Relationship]) -> Tuple[list[Relationship], list[Relationship]]:
         """
         Split a list of Relationship objects into two lists:
-        - contrast_relations: relationships where relationship_type == "contrast"
+        - contradiction_relations: relationships where relationship_type == "contradiction"
         - other_relations: relationships with any other type
         """
         if not relationships:
             return [], []
 
-        contrast_relations: list[Relationship] = []
+        contradiction_relations: list[Relationship] = []
         other_relations: list[Relationship] = []
 
         for rel in relationships:
             rel_type = getattr(rel, "relationship_type", None)
-            if rel_type == "contrast":
-                contrast_relations.append(rel)
+            if rel_type == "contradiction":
+                contradiction_relations.append(rel)
             else:
                 other_relations.append(rel)
 
-        return contrast_relations, other_relations
+        return contradiction_relations, other_relations
 
     def find_nodes_in_scc(self) -> list[list[str]]:
         """
@@ -106,48 +112,59 @@ class GlobalGraph:
         #TODO should send cycle to user and get user's decision node
         pass
     
-    def resolve_contrast_by_user(self, node: str) -> bool:
+    def resolve_contradiction_by_user(self, node: str) -> bool:
         #TODO should ask user if they want to delete it or its neighbors
         pass
 
-    def automatic_or_manual(self):
+    def automatic_or_manual(self) -> bool:
         #TODO ask user if they want to resolve conflicts automatically or manually
         pass
 
-    def remove_node(self, node):
-        self.nodes.remove(node)
+    def remove_node(self, node) -> None:
+        self.nodes.discard(node)
+        self.contradiction_nodes.discard(node)
         self.graph.pop(node, None)
         for other_node in self.graph:
             self.graph[other_node].discard(node)
-        self.contrast_graph.pop(node, None)
-        for other_node in self.contrast_graph:
-            self.contrast_graph[other_node].discard(node)
-        for relation in self.contrast_relations:
+        self.contradiction_graph.pop(node, None)
+        for other_node in self.contradiction_graph:
+            self.contradiction_graph[other_node].discard(node)
+        for relation in self.other_relations:
             if relation.assertion1_id == node or relation.assertion2_id == node:
-                self.contrast_relations.remove(relation)
+                self.other_relations.remove(relation)
+        for relation in self.contradiction_relations:
+            if relation.assertion1_id == node or relation.assertion2_id == node:
+                self.contradiction_relations.remove(relation)
         for relation in self.relationships:
             if relation.assertion1_id == node or relation.assertion2_id == node:
                 self.relationships.remove(relation)
 
 
-    def pick_worst_node(self, nodes_part_of_scc):
+    def pick_worst_node(self, nodes_part_of_scc) -> str:
         min_score = 100000000
         min_node: str | None = None
         for node in self.nodes:
             if node not in nodes_part_of_scc:
                 continue
-            if node not in self.contrast_graph:
+            if node not in self.contradiction_graph:
                 continue
-            score = len(self.graph[node]) - 2 * len(self.contrast_graph[node])
+            score = len(self.graph[node]) - len(self.contradiction_graph[node])
             if score < min_score:
                 min_score = score
                 min_node = node
+
+        if min_node is None:
+            for node in self.contradiction_nodes:
+                score = len(self.graph[node]) - len(self.contradiction_graph[node])
+                if score < min_score:
+                    min_score = score
+                    min_node = node
         return min_node
 
     def resolve_cycles_and_conflicts(self) -> None:
-        """Resolve cycles using contrast penalty heuristics (placeholder).
+        """Resolve cycles using contradiction penalty heuristics (placeholder).
         
-        Currently computes a simple score per node inside SCCs (out_degree - 2*contrast_out)
+        Currently computes a simple score per node inside SCCs (out_degree - contradiction_out)
         and would select a candidate node to act upon. The concrete mutation of the
         graph/relations is not implemented yet.
         """
@@ -157,11 +174,11 @@ class GlobalGraph:
         list_of_scc = self.find_nodes_in_scc()
         nodes_part_of_scc = [node for sublist in list_of_scc for node in sublist]
 
-        while len(nodes_part_of_scc) > 0 and len(self.contrast_relations) > 0:
+        while len(nodes_part_of_scc) > 0 and len(self.contradiction_relations) > 0:
 
             min_node = self.pick_worst_node(nodes_part_of_scc)
 
-            if self.contrast_graph is None:
+            if self.contradiction_graph is None:
                 if automatic:
                     remove_nodes = set(random.choice(nodes_part_of_scc))
                 else:
@@ -170,13 +187,68 @@ class GlobalGraph:
                 if automatic:
                     remove_nodes = set(min_node)
                 else:
-                    if self.resolve_contrast_by_user(min_node):
+                    if self.resolve_contradiction_by_user(min_node):
                         remove_nodes = set(min_node)
                     else:
-                        remove_nodes = set(self.contrast_graph[min_node])
+                        remove_nodes = set(self.contradiction_graph[min_node])
 
             for node in remove_nodes:
                 self.remove_node(node)
 
             list_of_scc = self.find_nodes_in_scc()
             nodes_part_of_scc = self.find_nodes_in_scc()
+
+    def find_all_ancestors(self) -> None:
+        for node in self.nodes:
+            for child in self.graph[node]:
+                self.reverse_graph.setdefault(child, set()).add(node)
+
+    def find_all_starting_nodes(self) -> List[str]:
+        starter_nodes = []
+        for node in self.nodes:
+            if len(self.reverse_graph[node]) == 0:
+                starter_nodes.append(node)
+        return starter_nodes
+
+    def check_used_all_parents(self, node) -> bool:
+        return self.number_of_visited_parents[node] == len(self.reverse_graph[node])
+
+    def compare_two_relations(self, relation1: Relationship, relation2: Relationship) -> bool:
+        relation_type1 = relation1.gettattr("relationship_type", None)
+        relation_type2 = relation2.gettattr("relationship_type", None)
+        weights = {"cause": 0, "condition": 1, "evidence": 2, "contrast": 3, "background": 4}
+        if weights[relation_type1] != weights[relation_type2]:
+            return weights[relation_type1] < weights[relation_type2]
+        else:
+            #TODO ask which one is better from Amirali the LLM
+            return True
+
+    def sort_all_children(self, parent_id: str, children : List[str]) -> List[str]:
+        def comparison(node1: str, node2: str) -> bool:
+            relation1 = self.relationship_for_pair.get((parent_id, node1))
+            relation2 = self.relationship_for_pair.get((parent_id, node2))
+            if relation1 is None or relation2 is None:
+                return True
+            return self.compare_two_relations(relation1, relation2)
+
+        return sorted(children, key=cmp_to_key(comparison))
+
+    def get_valid_children(self, node: str) -> List[str]:
+        children = []
+        for child in self.graph[node]:
+            self.number_of_visited_parents[child] += 1
+            if self.check_used_all_parents(child):
+                children.append(child)
+        return children
+
+    def layer(self, lst: List[str]):
+        for node in lst:
+            self.ordered_graph.append(node)
+            children = self.get_valid_children(node)
+            sorted_children = self.sort_all_children(node, children)
+            self.layer(sorted_children)
+
+    def order_the_graph(self):
+        starting_nodes = self.sort_all_children(self.find_all_starting_nodes())
+        self.layer(starting_nodes)
+        return self.ordered_graph
