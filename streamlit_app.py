@@ -42,6 +42,61 @@ if "clarus_app" not in st.session_state:
     st.session_state.ordered_graph_generated = False
     st.session_state.global_graph = None
 
+def _add_or_update_relationship(assertion1_id: str, assertion2_id: str, relationship_type: str, evaluation_key: str):
+    """Helper function to add or update a relationship and update the global graph."""
+    # Get assertion objects
+    assertion1_obj = next((a for a in st.session_state.assertions if a.id == assertion1_id), None)
+    assertion2_obj = next((a for a in st.session_state.assertions if a.id == assertion2_id), None)
+    
+    if not assertion1_obj or not assertion2_obj:
+        st.error("Invalid assertion selection.")
+        return
+    
+    # Get the cached evaluation results
+    if evaluation_key in st.session_state:
+        confidence, reason, suggestion = st.session_state[evaluation_key]
+    else:
+        confidence, reason, suggestion = 50, "No evaluation available", "ADD"
+    
+    # Check if relationship already exists
+    existing_rel = None
+    for rel in st.session_state.relationships:
+        if ((rel.assertion1_id == assertion1_id and rel.assertion2_id == assertion2_id) or
+            (rel.assertion1_id == assertion2_id and rel.assertion2_id == assertion1_id)):
+            existing_rel = rel
+            break
+    
+    if existing_rel:
+        # Update existing relationship
+        existing_rel.relationship_type = relationship_type
+        existing_rel.confidence = confidence / 100.0  # Convert to 0-1 scale
+        existing_rel.explanation = f"{relationship_type} relationship between assertions. LLM Evaluation: {reason} (Suggestion: {suggestion})"
+        st.success("Relationship updated successfully!")
+    else:
+        # Create new relationship
+        from models import Relationship
+        new_rel = Relationship(
+            assertion1_id=assertion1_id,
+            assertion2_id=assertion2_id,
+            relationship_type=relationship_type,
+            confidence=confidence / 100.0,  # Convert to 0-1 scale
+            explanation=f"{relationship_type} relationship between assertions. LLM Evaluation: {reason} (Suggestion: {suggestion})"
+        )
+        st.session_state.relationships.append(new_rel)
+        st.success("Relationship added successfully!")
+    
+    # Clear edit state after successful operation
+    if 'edit_relationship' in st.session_state:
+        del st.session_state['edit_relationship']
+    
+    # Update global graph with new relationships (same logic as conflict resolution)
+    st.session_state.global_graph = GlobalGraph(st.session_state.relationships)
+    st.session_state.conflicts_resolved = False  # Need to re-resolve conflicts
+    st.session_state.chose_resolution_method = False
+    st.session_state.ordered_graph_generated = False
+    
+    st.rerun()
+
 def display_assertions(assertions: List[Assertion]):
     """Display the current assertions in a nice format."""
     if not assertions:
@@ -752,71 +807,44 @@ def structure_tab():
                         st.error(f"❌ **{confidence}%** - {reason}")
                         st.info("💡 **Suggestion:** Remove this relationship")
             
-            # Add/Change button
-            if st.button("➕ Add/Change", key="manage_relationship_btn", help="Add new or modify existing relationship", use_container_width=True):
-                # Validate selection
-                if not selected_assertion1 or selected_assertion1 == "":
-                    st.error("Please select the first assertion.")
-                    st.stop()
+            # Check if we need to show confirmation buttons
+            evaluation_key = f"eval_{selected_assertion1}_{selected_assertion2}_{selected_relationship}"
+            needs_confirmation = False
+            confirmation_type = None
+            
+            if (selected_assertion1 and selected_assertion2 and selected_assertion1 != "" and 
+                evaluation_key in st.session_state):
+                confidence, reason, suggestion = st.session_state[evaluation_key]
+                if suggestion == "REMOVE" or suggestion.startswith("MODIFY to"):
+                    needs_confirmation = True
+                    confirmation_type = suggestion
+            
+            # Show confirmation buttons if needed
+            if needs_confirmation:
+                st.markdown("**⚠️ LLM Recommendation:**")
+                if confirmation_type == "REMOVE":
+                    st.warning("The LLM suggests removing this relationship. Are you sure you want to add it?")
+                elif confirmation_type.startswith("MODIFY to"):
+                    st.warning("The LLM suggests modifying this relationship. Are you sure you want to add it as-is?")
                 
-                # Get assertion objects
-                assertion1_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion1), None)
-                assertion2_obj = next((a for a in st.session_state.assertions if a.id == selected_assertion2), None)
-                
-                if assertion1_obj and assertion2_obj:
-                    # Get the cached evaluation results
-                    evaluation_key = f"eval_{selected_assertion1}_{selected_assertion2}_{selected_relationship}"
-                    if evaluation_key in st.session_state:
-                        confidence, reason, suggestion = st.session_state[evaluation_key]
-                        
-                        # Ask for confirmation based on suggestion
-                        if suggestion == "REMOVE":
-                            st.warning("⚠️ The LLM suggests removing this relationship. Are you sure you want to add it?")
-                            if not st.button("Yes, Add Anyway", key="confirm_remove"):
-                                st.stop()
-                        elif suggestion.startswith("MODIFY to"):
-                            st.warning("⚠️ The LLM suggests modifying this relationship. Are you sure you want to add it as-is?")
-                            if not st.button("Yes, Add Anyway", key="confirm_modify"):
-                                st.stop()
-                        
-                        # Check if relationship already exists
-                        existing_rel = None
-                        for rel in st.session_state.relationships:
-                            if ((rel.assertion1_id == selected_assertion1 and rel.assertion2_id == selected_assertion2) or
-                                (rel.assertion1_id == selected_assertion2 and rel.assertion2_id == selected_assertion1)):
-                                existing_rel = rel
-                                break
-                        
-                        if existing_rel:
-                            # Update existing relationship
-                            existing_rel.relationship_type = selected_relationship
-                            existing_rel.confidence = confidence / 100.0  # Convert to 0-1 scale
-                            existing_rel.explanation = f"{selected_relationship} relationship between assertions. LLM Evaluation: {reason} (Suggestion: {suggestion})"
-                            st.success("Relationship updated successfully!")
-                        else:
-                            # Create new relationship
-                            from models import Relationship
-                            new_rel = Relationship(
-                                assertion1_id=selected_assertion1,
-                                assertion2_id=selected_assertion2,
-                                relationship_type=selected_relationship,
-                                confidence=confidence / 100.0,  # Convert to 0-1 scale
-                                explanation=f"{selected_relationship} relationship between assertions. LLM Evaluation: {reason} (Suggestion: {suggestion})"
-                            )
-                            st.session_state.relationships.append(new_rel)
-                            st.success("Relationship added successfully!")
-                        
-                        # Clear edit state after successful operation
-                        if 'edit_relationship' in st.session_state:
-                            del st.session_state['edit_relationship']
-                        
-                        # Update global graph with new relationships
-                        st.session_state.global_graph = GlobalGraph(st.session_state.relationships)
-                        st.session_state.conflicts_resolved = False  # Need to re-resolve conflicts
-                        st.session_state.chose_resolution_method = False
-                        st.session_state.ordered_graph_generated = False
-                        
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("✅ Yes, Add Anyway", key="confirm_add", type="primary"):
+                        # Proceed with adding the relationship
+                        _add_or_update_relationship(selected_assertion1, selected_assertion2, selected_relationship, evaluation_key)
+                with col2:
+                    if st.button("❌ Cancel", key="cancel_add"):
                         st.rerun()
+            else:
+                # Regular add/change button
+                if st.button("➕ Add/Change", key="manage_relationship_btn", help="Add new or modify existing relationship", use_container_width=True):
+                    # Validate selection
+                    if not selected_assertion1 or selected_assertion1 == "":
+                        st.error("Please select the first assertion.")
+                        st.stop()
+                    
+                    # Proceed with adding the relationship
+                    _add_or_update_relationship(selected_assertion1, selected_assertion2, selected_relationship, evaluation_key)
         
         with right_col:
             st.markdown("#### Interactive Preview")
