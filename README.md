@@ -34,6 +34,56 @@ The application loads environment variables from a `.env` file in the project ro
 
 - `OPENAI_API_KEY`: Your OpenAI API key for LLM functionality
 
+## Project Structure
+
+```
+Clarus/
+├── models/                 # Core data models and state definitions
+│   ├── assertions.py      # Assertion data structures
+│   └── states.py          # Workflow state management
+├── workflows/             # LangGraph workflow implementations
+│   ├── idea_capture.py    # Extract assertions from ideas
+│   ├── structure.py       # Analyze and organize relationships
+│   ├── review.py          # Review and validate content
+│   ├── prose.py           # Generate fluent text
+│   └── conflict_resolving.py # Handle assertion conflicts
+├── ui/                    # Streamlit user interface components
+│   ├── idea_ui.py         # Idea capture interface
+│   ├── structure_ui.py    # Structure visualization
+│   ├── review_ui.py       # Review and editing interface
+│   ├── prose_ui.py        # Prose generation interface
+│   └── common.py          # Shared UI components
+├── voice/                 # Voice input functionality
+│   └── streamlit_voice.py # Voice-to-text integration
+├── streamlit_app.py       # Main application entry point
+├── app.py                 # Alternative Flask app (if needed)
+└── langgraph.json         # LangGraph configuration
+```
+
+## Workflow Modes
+
+Clarus operates through four distinct workflow modes, each designed for a specific aspect of structured writing:
+
+### 💡 Idea Capture
+Extract structured assertions from your thoughts and ideas through voice or text input.
+
+![Idea Capture Workflow](assets/idea.png)
+
+### 🏗️ Structure
+Analyze and organize relationships between assertions to create a coherent structure.
+
+![Structure Workflow](assets/structure.png)
+
+### 🔍 Review
+Transform assertions into structured paragraphs with comprehensive issue detection.
+
+![Review Workflow](assets/review.png)
+
+### 📖 Prose
+Generate fluent, well-structured text from your organized content.
+
+![Prose Workflow](assets/prose.png)
+
 ## Features
 
 - **💡 Idea Capture**: Extract structured assertions from your thoughts and ideas
