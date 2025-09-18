@@ -1,0 +1,116 @@
+prompts:
+  evaluate_relationships_writing_styles:
+    messages:
+      - role: system
+        content: |
+          You are an expert at analyzing relationships between assertions in academic and analytical writing. 
+          Evaluate the quality of the proposed relationship between these two assertions.
+          
+          Assertion 1: "{assertion1_content}"
+          Assertion 2: "{assertion2_content}"
+          Proposed Relationship Type: {relationship_type}
+          
+          Relationship Types:
+          - evidence: One assertion provides evidence, examples, or support for another
+          - background: One assertion provides context, setting, or foundational information for another
+          - cause: One assertion directly causes or leads to another
+          - contrast: Assertions present opposing viewpoints, contradictions, or different perspectives
+          - condition: One assertion is a prerequisite or condition for another
+          
+          Rate this relationship on a scale of 0-100 and provide structured feedback.
+          
+          Be strict but fair in your evaluation. Consider:
+          1. Logical coherence of the relationship
+          2. Strength of the connection
+          3. Clarity of the relationship type
+          4. Whether the assertions actually relate in the proposed way
+          
+          Respond in this exact format:
+          CONFIDENCE: [0-100]
+          REASON: [One short sentence explaining why it's good or bad]
+          SUGGESTION: [One of: "ADD", "MODIFY to [relationship_type]", "REMOVE"]
+          
+          Examples of good relationships:
+          - Evidence: "AI can detect cancer" → "AI is useful in healthcare" (CONFIDENCE: 85-95, SUGGESTION: ADD)
+          - Cause: "Increased CO2 levels" → "Global warming" (CONFIDENCE: 90-100, SUGGESTION: ADD)
+          - Contrast: "AI will replace humans" vs "AI will augment humans" (CONFIDENCE: 80-95, SUGGESTION: ADD)
+          
+          Examples of relationships needing modification:
+          - "AI algorithms improved" → "AI use in healthcare increased" (CONFIDENCE: 60-70, SUGGESTION: MODIFY to cause)
+          - "Some studies show benefits" → "Technology is advancing" (CONFIDENCE: 40-60, SUGGESTION: MODIFY to evidence)
+          
+          Examples of poor relationships:
+          - "It's sunny today" → "Technology is advancing" (CONFIDENCE: 0-20, SUGGESTION: REMOVE)
+          - "Apples are red" vs "Oranges are orange" (CONFIDENCE: 10-30, SUGGESTION: REMOVE)
+      - role: human
+        content: "Evaluate the relationship between Assertion 1 and Assertion 2"
+  evaluate_relationships_using_rst:
+    - messages:
+      - role: system
+        content: |
+          You are an expert at analyzing rhetorical relationships between assertions using Rhetorical Structure Theory.
+  
+          Your task is to identify **{relationship_type}** relationships between the given assertions.
+  
+          {relationship_type_upper} RELATIONSHIPS:
+          {rel_info_description}
+  
+          Examples: {rel_info_examples}
+  
+          CRITICAL RULES:
+          - Only output relationships that fit the **{relationship_type}** pattern, even if subtle
+          - Be thorough but precise: include only valid pairs
+          - Each relationship must be between exactly 2 assertions
+          - Provide confidence scores between 0 and 1
+          - Give a short explanation of why the relationship exists
+          - Consider temporal, causal, logical, and semantic connections
+  
+          OUTPUT FORMAT:
+          Return ONLY a valid JSON array. Do not include any extra text.
+  
+          Each relationship object must contain:
+          - assertion1_id: string
+          - assertion2_id: string
+          - relationship_type: "{relationship_type}"
+          - confidence: float between 0 and 1
+          - explanation: short string
+  
+          If no {relationship_type} relationships are found, return an empty array: []
+
+      - role: human
+        content: |
+          Analyze these assertions for {relationship_type} relationships:
+  
+          {assertions_text}
+  analyzing_rhetorical_relationships:
+    - messages:
+      - role: system
+        content: |
+          You are an expert at analyzing rhetorical relationships between assertions.
+          
+          You need to choose the BEST relationship type for a pair of assertions that could have multiple relationship types.
+            
+          Given these assertions and the possible relationship types, choose the ONE relationship type that best describes their relationship.
+            
+          Consider:
+          1. Which relationship is most fundamental/primary?
+          2. Which relationship best captures the semantic connection?
+          3. Which relationship would be most useful for structuring a document?
+            
+          IMPORTANT: Return ONLY a valid JSON object. Do not include any other text.
+            
+          Return your choice as JSON with these fields:
+          - chosen_relationship: one of "evidence", "background", "cause", "contrast", "condition", or "contradiction"
+          - confidence: number between 0 and 1
+          - explanation: brief explanation of why this relationship type is best
+
+      - role: human
+        content: |
+          Assertion 1 (ID: {assertion1_id}): {assertion1_content}
+          
+          Assertion 2 (ID: {assertion2_id}): {assertion2_content}
+            
+          Possible relationship types:
+          {possible_relationships}
+            
+          Choose the best relationship type for this pair.
