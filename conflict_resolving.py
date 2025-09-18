@@ -3,7 +3,7 @@ from typing import List, Tuple
 import random
 import streamlit as st
 
-from structure import Relationship
+from models import Relationship
 
 class GlobalGraph:
     def __init__(self, relationships: List[Relationship]) -> None:

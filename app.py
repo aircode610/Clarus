@@ -9,8 +9,8 @@ structured document creation.
 from typing import List, Dict, Any, Optional
 import os
 from models import Assertion, ChangeHistory
-from idea_capture import IdeaCaptureWorkflow
-from structure import StructureWorkflow
+from workflows.idea_capture import IdeaCaptureWorkflow
+from workflows.structure import StructureWorkflow
 
 
 class ClarusApp:

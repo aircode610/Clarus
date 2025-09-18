@@ -19,9 +19,9 @@ import conflict_resolving
 from conflict_resolving import GlobalGraph
 from models import Assertion, Relationship
 from app import ClarusApp, create_clarus_app
-from structure import evaluate_relationship_quality
-from review import ReviewWorkflow
-from prose import ProseWorkflow
+from workflows.structure import evaluate_relationship_quality
+from workflows.review import ReviewWorkflow
+from workflows.prose import ProseWorkflow
 
 # Page configuration
 st.set_page_config(
