@@ -10,6 +10,12 @@ import warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 warnings.filterwarnings("ignore", category=UserWarning, module="ctranslate2")
 
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 import streamlit as st
 from app import create_clarus_app
 from ui import structure_tab, review_tab, prose_tab

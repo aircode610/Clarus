@@ -8,6 +8,10 @@ structured document creation.
 
 from typing import List, Dict, Any, Optional
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 from models import Assertion, ChangeHistory
 from workflows.idea_capture import IdeaCaptureWorkflow
 from workflows.structure import StructureWorkflow
