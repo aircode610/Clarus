@@ -120,4 +120,4 @@ The application uses a minimal set of dependencies:
 - **Core**: LangGraph, LangChain, Streamlit
 - **AI**: OpenAI API integration
 - **Voice**: Faster-Whisper, Vosk (optional)
-- **Visualization**: Plotly
+- **Visualization**: Plotly, networkx
