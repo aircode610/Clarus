@@ -21,7 +21,7 @@ Clarus is more than a tool — it introduces a new paradigm for technical writin
      ```
 
    - Edit `.env` and add your OpenAI API key:
-   
+
      ```
      OPENAI_API_KEY=your_actual_openai_api_key_here
      ```
@@ -37,25 +37,21 @@ Clarus is more than a tool — it introduces a new paradigm for technical writin
    ```
    This will start the LangGraph development server where you can visualize and interact with the workflow diagrams.
 
-## Environment Variables
-
-The application loads environment variables from a `.env` file in the project root. Required variables:
-
-- `OPENAI_API_KEY`: Your OpenAI API key for LLM functionality
-
 ## Project Structure
 
 ```
 Clarus/
-├── models/                 # Core data models and state definitions
-│   ├── assertions.py      # Assertion data structures
-│   └── states.py          # Workflow state management
-├── workflows/             # LangGraph workflow implementations
-│   ├── idea_capture.py    # Extract assertions from ideas
-│   ├── structure.py       # Analyze and organize relationships
-│   ├── review.py          # Review and validate content
-│   ├── prose.py           # Generate fluent text
+├── models/             # Core data models and state definitions
+│   ├── assertions.py   # Assertion data structures
+│   └── states.py       # Workflow state management
+|
+├── workflows/                # LangGraph workflow implementations
+│   ├── idea_capture.py       # Extract assertions from ideas
+│   ├── structure.py          # Analyze and organize relationships
+│   ├── review.py             # Review and validate content
+│   ├── prose.py              # Generate fluent text
 │   └── conflict_resolving.py # Handle assertion conflicts
+|
 ├── ui/                    # Streamlit user interface components
 │   ├── idea_ui.py         # Idea capture interface
 │   ├── structure_ui.py    # Structure visualization
