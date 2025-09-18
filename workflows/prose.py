@@ -19,8 +19,18 @@ from models import Assertion, Relationship, Paragraph, Issue, ProseState
 class ProseWorkflow:
     """Workflow for generating final prose from structured paragraphs."""
     
-    def __init__(self):
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.3)
+    def __init__(self, model_name: str = "gpt-4o-mini", config: dict = None):
+        self.model_name = model_name
+        self.config = config or {}
+        self.llm = ChatOpenAI(model=model_name, temperature=0.3)
+        self._graph = None
+    
+    @property
+    def graph(self):
+        """Get the compiled graph."""
+        if self._graph is None:
+            self._graph = self._build_graph()
+        return self._graph
     
     def _build_graph(self) -> StateGraph:
         """Build the prose generation graph."""
@@ -172,8 +182,7 @@ class ProseWorkflow:
         )
         
         # Run the workflow
-        graph = self._build_graph()
-        final_state = graph.invoke(initial_state)
+        final_state = self.graph.invoke(initial_state)
         
         # Handle both state object and dictionary returns
         if hasattr(final_state, 'generated_text'):
@@ -190,6 +199,7 @@ class ProseWorkflow:
             return final_state
 
 
-def create_prose_workflow() -> ProseWorkflow:
-    """Create a prose workflow instance."""
-    return ProseWorkflow()
+def create_prose_workflow(config: dict = None):
+    """Factory function to create and return the compiled graph for LangGraph Studio."""
+    workflow = ProseWorkflow(config=config)
+    return workflow.graph
