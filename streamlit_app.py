@@ -20,6 +20,8 @@ from conflict_resolving import GlobalGraph
 from models import Assertion, Relationship
 from app import ClarusApp, create_clarus_app
 from structure import evaluate_relationship_quality
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 
 # Page configuration
 st.set_page_config(
@@ -1003,9 +1005,74 @@ def prose_tab():
     
     st.markdown('<div class="prose-mode">', unsafe_allow_html=True)
     st.header("📖 Prose Mode")
-    st.markdown("Transform your refined assertions into fluent, reader-friendly text.")
-    
-    st.info("🚧 Prose mode is coming soon! This will transform your assertions into well-structured prose.")
+    st.markdown("Transform your refined assertions into fluent, reader-friendly academic prose.")
+
+    # Ensure plan exists
+    if "result_text" not in st.session_state:
+        st.session_state.result_text = ""
+
+    # Editable plan text area
+    plan_text = st.text_area(
+        "Plan from Review (edit if needed)",
+        value=st.session_state.get("result_text", ""),
+        key="prose_plan_text",
+        height=220,
+        help="This plan will be expanded into a full academic text."
+    )
+
+    # Sync back to result_text to keep it current
+    st.session_state.result_text = plan_text
+
+    # Model and options
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        temperature = st.slider("Creativity", 0.0, 1.0, 0.3, 0.1, help="Lower = more formal/precise, Higher = more creative")
+    with col2:
+        add_headings = st.checkbox("Include suggested headings", value=False)
+
+    # Generation button
+    disabled = len(plan_text.strip()) == 0
+    if disabled:
+        st.warning("The plan is empty. Please provide or generate a plan in Review mode.")
+
+    if st.button("Generate Academic Text", disabled=disabled, type="primary"):
+        try:
+            with st.spinner("Generating academic text..."):
+                llm = ChatOpenAI(model="gpt-4o-mini", temperature=temperature)
+                instruction = (
+                    "You are an expert academic writer. Expand the provided plan into a coherent, formal academic text suitable for a short paper or report section. "
+                    "Requirements: 1) Maintain logical flow and argumentative coherence; 2) Use precise, objective, and formal tone; 3) Add connective tissue (transitions, definitions, brief context) as needed; "
+                    "4) Avoid bullet points; write continuous prose; 5) Do not invent unsupported claims, but you may elaborate reasoning from the plan; "
+                    "6) Where appropriate, structure content with an introduction, logically ordered paragraphs, and a concise concluding synthesis; "
+                    "7) Remove meta-commentary about the task itself."
+                )
+                if add_headings:
+                    instruction += " 8) Include concise section headings appropriate for academic writing."
+
+                prompt = (
+                    f"{instruction}\n\n"
+                    "PLAN TO EXPAND:\n"
+                    "----------------\n"
+                    f"{plan_text}\n"
+                )
+                message = HumanMessage(content=prompt)
+                response = llm.invoke([message])
+                academic_text = getattr(response, "content", str(response))
+                st.session_state.academic_text = academic_text
+        except Exception as e:
+            st.error(f"Failed to generate academic text: {e}")
+
+    # Show output if available
+    if st.session_state.get("academic_text"):
+        st.subheader("Generated Academic Text")
+        st.text_area("Academic Text", value=st.session_state.academic_text, height=420, key="academic_text_display")
+        st.download_button(
+            label="Download Academic Text (.txt)",
+            data=st.session_state.academic_text,
+            file_name="academic_text.txt",
+            mime="text/plain"
+        )
+
     st.markdown('</div>', unsafe_allow_html=True)
 
 def main():
