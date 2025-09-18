@@ -118,19 +118,21 @@ PARAGRAPH TYPES:
 
 IMPORTANT: Return ONLY a valid JSON array. Do not include any other text.
 
+CRITICAL: You MUST use the exact assertion IDs provided in the ORDERED ASSERTIONS section. Do not create new IDs or modify existing ones.
+
 Return your response as a JSON list of paragraphs with this structure:
 [
     {{
         "id": "paragraph_1",
         "title": "Clear paragraph title",
         "content": "Flowing paragraph text that naturally incorporates the assertions",
-        "assertion_ids": ["assertion_id_1", "assertion_id_2"],
+        "assertion_ids": ["1", "2", "3"],
         "paragraph_type": "body",
         "confidence": 0.8
     }}
 ]
 
-The content should be well-written prose, not just a list of assertions."""),
+The assertion_ids must be the exact IDs from the ORDERED ASSERTIONS list (like "1", "2", "3", etc.). The content should be well-written prose, not just a list of assertions."""),
             ("human", """Create structured paragraphs from these ordered assertions:
 
 ORDERED ASSERTIONS:

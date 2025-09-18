@@ -1229,10 +1229,15 @@ def review_tab():
                 st.write(paragraph.content)
                 
                 st.markdown("**Based on assertions:**")
-                for assertion_id in paragraph.assertion_ids:
-                    assertion = assertions_dict.get(assertion_id)
-                    if assertion:
-                        st.write(f"- {assertion.content}")
+                if paragraph.assertion_ids:
+                    for assertion_id in paragraph.assertion_ids:
+                        assertion = assertions_dict.get(assertion_id)
+                        if assertion:
+                            st.write(f"- {assertion.content}")
+                        else:
+                            st.write(f"- [Missing assertion: {assertion_id}]")
+                else:
+                    st.write("*No assertions linked to this paragraph*")
                 
                 # Display issues for this paragraph
                 if paragraph_issues:
