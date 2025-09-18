@@ -1,5 +1,5 @@
 # Clarus
-A new paradigm for technical writing
+Clarus is more than a tool — it introduces a new paradigm for technical writing. Instead ofworking directly with prose, users interact with the structural essence of their ideas. Everyassertion can be traced back to its origin, whether from dictated speech or an earlierdraft. Text can be regenerated in different styles or formats as needed. The structuredoutline becomes a living source of truth, ready to be reviewed, critiqued, and compiled ondemand.
 
 ## Setup
 
@@ -8,7 +8,12 @@ A new paradigm for technical writing
    pip install -r requirements.txt
    ```
 
-2. **Configure environment variables:**
+2. **Install ffmpeg (for voice features):**
+   - **Windows**: Download from [ffmpeg.org](https://ffmpeg.org/download.html) or use chocolatey: `choco install ffmpeg`
+   - **macOS**: `brew install ffmpeg`
+   - **Linux**: `sudo apt install ffmpeg` (Ubuntu/Debian) or `sudo yum install ffmpeg` (CentOS/RHEL)
+
+3. **Configure environment variables:**
    - Copy `env.example` to `.env`:
      ```bash
      cp env.example .env
@@ -18,7 +23,7 @@ A new paradigm for technical writing
      OPENAI_API_KEY=your_actual_openai_api_key_here
      ```
 
-3. **Run the application:**
+4. **Run the application:**
    ```bash
    streamlit run streamlit_app.py
    ```
@@ -29,6 +34,18 @@ The application loads environment variables from a `.env` file in the project ro
 
 - `OPENAI_API_KEY`: Your OpenAI API key for LLM functionality
 
-Optional variables:
-- `ANTHROPIC_API_KEY`: For Anthropic models (if used)
-- `LANGCHAIN_API_KEY`: For LangChain services (if used)
+## Features
+
+- **💡 Idea Capture**: Extract structured assertions from your thoughts and ideas
+- **🏗️ Structure**: Organize and visualize relationships between assertions
+- **🔍 Review**: Transform assertions into structured paragraphs with issue detection
+- **📖 Prose**: Generate fluent text from structured content
+- **🎤 Voice Input**: Dictate your ideas using voice-to-text (requires ffmpeg)
+
+## Dependencies
+
+The application uses a minimal set of dependencies:
+- **Core**: LangGraph, LangChain, Streamlit
+- **AI**: OpenAI API integration
+- **Voice**: Faster-Whisper, Vosk (optional)
+- **Visualization**: NetworkX, Plotly
