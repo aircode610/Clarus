@@ -28,6 +28,12 @@ Clarus is more than a tool — it introduces a new paradigm for technical writin
    streamlit run streamlit_app.py
    ```
 
+5. **View workflow diagrams (optional):**
+   ```bash
+   langgraph dev
+   ```
+   This will start the LangGraph development server where you can visualize and interact with the workflow diagrams.
+
 ## Environment Variables
 
 The application loads environment variables from a `.env` file in the project root. Required variables:
