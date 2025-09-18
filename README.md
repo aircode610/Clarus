@@ -41,9 +41,9 @@ Clarus is more than a tool — it introduces a new paradigm for technical writin
 
 ```
 Clarus/
-├── models/             # Core data models and state definitions
-│   ├── assertions.py   # Assertion data structures
-│   └── states.py       # Workflow state management
+├── models/                   # Core data models and state definitions
+│   ├── assertions.py         # Assertion data structures
+│   └── states.py             # Workflow state management
 |
 ├── workflows/                # LangGraph workflow implementations
 │   ├── idea_capture.py       # Extract assertions from ideas
@@ -52,19 +52,19 @@ Clarus/
 │   ├── prose.py              # Generate fluent text
 │   └── conflict_resolving.py # Handle assertion conflicts
 |
-├── ui/                    # Streamlit user interface components
-│   ├── idea_ui.py         # Idea capture interface
-│   ├── structure_ui.py    # Structure visualization
-│   ├── review_ui.py       # Review and editing interface
-│   ├── prose_ui.py        # Prose generation interface
-│   └── common.py          # Shared UI components
+├── ui/                       # Streamlit user interface components
+│   ├── idea_ui.py            # Idea capture interface
+│   ├── structure_ui.py       # Structure visualization
+│   ├── review_ui.py          # Review and editing interface
+│   ├── prose_ui.py           # Prose generation interface
+│   └── common.py             # Shared UI components
 |
-├── voice/                 # Voice input functionality
-│   └── streamlit_voice.py # Voice-to-text integration
+├── voice/                    # Voice input functionality
+│   └── streamlit_voice.py    # Voice-to-text integration
 |
-├── streamlit_app.py       # Main application entry point
-├── app.py                 # Alternative app script(if needed)
-└── langgraph.json         # LangGraph configuration
+├── streamlit_app.py          # Main application entry point
+├── app.py                    # Alternative app script(if needed)
+└── langgraph.json            # LangGraph Studio configuration
 ```
 
 ## Workflow Modes
