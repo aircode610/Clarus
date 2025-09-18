@@ -15,10 +15,13 @@ Clarus is more than a tool — it introduces a new paradigm for technical writin
 
 3. **Configure environment variables:**
    - Copy `env.example` to `.env`:
+
      ```bash
      cp env.example .env
      ```
+
    - Edit `.env` and add your OpenAI API key:
+   
      ```
      OPENAI_API_KEY=your_actual_openai_api_key_here
      ```
