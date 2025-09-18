@@ -1,12 +1,17 @@
+import os
 from functools import cmp_to_key
 from typing import List, Tuple
 import random
-import streamlit as st
+import json
 
-from models import Relationship
+import streamlit as st
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+
+from models import Assertion, Relationship
 
 class GlobalGraph:
-    def __init__(self, relationships: List[Relationship]) -> None:
+    def __init__(self, relationships: List[Relationship], assertions: List[Assertion] = None) -> None:
         """
         Initialize a graph-based data structure from a list of relationships.
 
@@ -14,9 +19,11 @@ class GlobalGraph:
             relationships: A list of Relationship objects,
                     each representing a directed connection between two assertions
                     with fields `assertion1_id`, `assertion2_id`, and `relationship_type`.
+            assertions: A list of Assertion objects for easy lookup by ID.
 
         Description:
             Initializes the following internal structures:
+                - assertion_table (dict[str, Assertion]): Maps assertion IDs to Assertion objects.
                 - relationship_for_pair (dict[Tuple[str, str], Relationship]): Maps assertion pairs to Relationship objects.
                 - relationships (List[Relationship]): Original list of relationships.
                 - good_graph_1 (dict[str, set[str]]): Adjacency list of the graph with edges going from first assertion to second assertion.
@@ -29,6 +36,11 @@ class GlobalGraph:
                 - ordered_graph (List[str]): Assertions in traversal or topological order and final desired output.
                 - assertions_by_layers (dict[int, List[str]]): Assertions grouped by layers.
         """
+        self.assertion_table: dict[str, Assertion] = {}
+        if assertions:
+            for assertion in assertions:
+                self.assertion_table[assertion.id] = assertion
+        
         self.relationship_for_pair: dict[Tuple[str, str], Relationship] = {}
         self.relationships: List[Relationship] = relationships
 
@@ -476,6 +488,134 @@ class GlobalGraph:
         """
         return self.number_of_visited_parents[node] == len(self.good_graph_2[node])
 
+    def get_llm_answer_with_parent(self, rel1: Relationship, rel2: Relationship):
+        """Get LLM comparison for two relationships with the same parent."""
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You compare TWO Relationship objects that attach to the SAME parent and have the SAME relationship_type.
+Decide which child assertion is the better fit under this parent.
+Decision rules (apply in order; stop at first decisive difference):
+1) Relation fit to the parent within this relation_type:
+   - cause: clearer, more direct causal mechanism > vague/indirect
+   - condition: precise, operational, testable condition > broad/ambiguous
+   - evidence: specific, measurable, source-backed > anecdotal/general
+   - contradiction: genuine, direct incompatibility > superficial difference
+   - background: concise, relevant, defining context > verbose/tangential
+2) Specificity and clarity: concrete, unambiguous language wins.
+3) Logical tightness: fewer leaps; aligns with parent's scope.
+4) Non-redundancy: adds complementary info rather than restating parent.
+5) If still tied: shorter, crisper phrasing wins.
+6) Final tiebreaker: lexicographic by child id to be deterministic.
+IMPORTANT:
+- Judge ONLY within the given relation_type and the given parent.
+- Return ONLY a bare JSON boolean: true if the FIRST is better, false otherwise.
+- Do NOT include any other text.
+EXAMPLES (return bare JSON boolean):
+Parent: "Index rebuilds cause service downtime."
+relation_type: "cause"
+A: "Rebuild locks the write path for 7–12s per shard."
+B: "Engineers are busy during rebuilds."
+→ true
+Parent: "Our algorithm reduces latency in real-time search."
+relation_type: "evidence"
+A: "Some users said it felt faster."
+B: "A/B test on 10M queries shows median latency ↓12%."
+→ false"""),
+            ("human", """parent_id: {parent_id}
+relation_type: {relation_type}
+first:
+  assertion1_id: {r1.assertion1_id}
+  assertion2_id: {r1.assertion2_id}
+  confidence: {r1.confidence}
+  explanation: {r1.explanation}
+second:
+  assertion1_id: {r2.assertion1_id}
+  assertion2_id: {r2.assertion2_id}
+  confidence: {r2.confidence}
+  explanation: {r2.explanation}""")
+        ])
+
+        # --- Call the LLM ---
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"))
+        chain = prompt | llm
+        response = chain.invoke({
+            "parent_id": "P1",
+            "relation_type": "cause",
+            "r1": {
+                "assertion1_id": rel1.assertion1_id,
+                "assertion2_id": rel1.assertion2_id,
+                "confidence": 0.8,
+                "explanation": rel1.explanation
+            },
+            "r2": {
+                "assertion1_id": rel2.assertion1_id,
+                "assertion2_id": rel2.assertion2_id,
+                "confidence": 0.75,
+                "explanation": rel2.explanation
+            }
+        })
+
+        # --- Extract boolean ---
+        content = response.content.strip()
+        if content.startswith("```"):
+            content = content.split("```")[1].split("```")[0].strip()
+
+        return json.loads(content)
+
+    def get_llm_answer_without_parent(self, node1: Assertion, node2: Assertion):
+        """Get LLM comparison for two standalone assertions for document beginning."""
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You compare TWO standalone assertions for the BEGINNING of a document (intro).
+Choose which one is a better opening assertion.
+Intro suitability (evaluate in this order; deterministic):
+1) Orientation & scope:
+   - Clear definition of topic / what it is
+   - Problem statement / why it matters
+   - Goal / thesis / high-level claim or promise
+2) Reader navigation:
+   - High-level approach/idea (one sentence)
+   - Contributions / deliverables (brief)
+   - (Optional) roadmap/structure preview
+3) Context (brief, essential background only)
+4) Defer details:
+   - Avoid fine-grained metrics, parameters, implementation, edge cases
+5) Quality filters:
+   - Clarity (atomic, declarative), coherence, non-redundancy
+6) If still tied: shorter, crisper phrasing wins.
+7) Final tiebreaker: lexicographic by id.
+IMPORTANT:
+- Judge fitness for the OPENING section, not overall importance.
+- Return ONLY a bare JSON boolean: true if the FIRST is better, false otherwise.
+- Do NOT include any other text.
+EXAMPLES (return bare JSON boolean):
+A: "Writing technical documents is difficult due to cognitive overload."
+B: "Latency decreased by 12% on a 10M-query A/B test."
+→ true
+A: "This project introduces Clarus, an AI-assisted writing tool."
+B: "We measured P95 latency improvements of 7%."
+→ true"""),
+            ("human", """first_id: {first_id}
+first_text: {first_text}
+second_id: {second_id}
+second_text: {second_text}""")
+        ])
+
+        # --- Call the LLM ---
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, openai_api_key=os.getenv("OPENAI_API_KEY"))
+        chain = prompt | llm
+        response = chain.invoke({
+            "first_id": node1.id,
+            "first_text": node1.content,
+            "second_id": node2.id,
+            "second_text": node2.content
+        })
+
+        # --- Extract boolean ---
+        content = response.content.strip()
+        if content.startswith("```"):
+            content = content.split("```")[1].split("```")[0].strip()
+
+        return json.loads(content)
+
     def compare_two_relations(self, relation1: Relationship, relation2: Relationship) -> bool:
         """
         Compare two Relationship objects to determine which has higher priority.
@@ -498,14 +638,14 @@ class GlobalGraph:
             - If the weights are equal, the comparison is deferred to LLM.
             - Designed to assist in ordering or selecting relationships when constructing or analyzing the graph.
         """
-        relation_type1 = relation1.relationship_type
-        relation_type2 = relation2.relationship_type
+        relation_type1 = getattr(relation1, "relationship_type", None)
+        relation_type2 = getattr(relation2, "relationship_type", None)
         weights = {"cause": 0, "condition": 1, "evidence": 2, "contrast": 3, "background": 4}
         if weights[relation_type1] != weights[relation_type2]:
             return weights[relation_type1] < weights[relation_type2]
         else:
-            #TODO ask which one is better from Amirali the LLM
-            return True
+            answer = self.get_llm_answer_with_parent(relation1, relation2)
+            return answer
 
     def sort_all_children(self, parent_id: str, children : List[str]) -> List[str]:
         """
@@ -531,20 +671,20 @@ class GlobalGraph:
         """
         def comparison(node1: str, node2: str) -> int:
             if parent_id == "":
-                # TODO ask which one is better from Amirali the LLM
-                return 0
+                answer = self.get_llm_answer_without_parent(self.assertion_table[node1], self.assertion_table[node2])
+                return -1 if answer else 1
             relation1 = self.relationship_for_pair.get((parent_id, node1))
             relation2 = self.relationship_for_pair.get((parent_id, node2))
 
             if relation1 is None and relation2 is None:
                 return 0
             if relation1 is None:
-                return -1  # or 1, depending on how you want to order
-            if relation2 is None:
                 return 1
+            if relation2 is None:
+                return -1
 
-            # assume compare_two_relations returns -1, 0, or 1
-            return self.compare_two_relations(relation1, relation2)
+            answer = self.compare_two_relations(relation1, relation2)
+            return -1 if answer else 1
 
         return sorted(children, key=cmp_to_key(comparison))
 
@@ -625,6 +765,46 @@ class GlobalGraph:
     def order_the_graph(self) -> None:
         starting_nodes = self.sort_all_children("", self.find_all_starting_nodes())
         self.ordering_assertions(starting_nodes, 0)
+
+    def get_some_cycle_from_scc(self, scc: List[str]) -> List[str]:
+        """
+        Find and return some cycle from a strongly connected component (SCC).
+        Args:
+            scc (List[str]): A list of assertion IDs forming a strongly connected component.
+        Returns:
+            List[str]: A list of assertion IDs forming a cycle within the SCC in order.
+                       Returns an empty list if no cycle is found (e.g., single-node SCC with no self-loop).
+        Description:
+            - Performs a depth-first search (DFS) starting from the first node in `scc`.
+            - Maintains a `path` stack to keep track of the current DFS path.
+            - Uses `nonlocal cycle` to store the first detected cycle:
+                * As soon as a neighbor node is encountered that is already in `path`,
+                  the slice of `path` from that node to the current node is assigned to `cycle`.
+                * Further DFS recursion stops once a cycle is found.
+            - Only explores neighbors that are part of the SCC.
+            - Useful for detecting a cycle that can then be resolved (e.g., by node removal).
+        """
+        path = []
+        cycle = []
+
+        def dfs(curr):
+            nonlocal cycle
+            path.append(curr)
+            for neighbour in self.good_graph_1[curr]:
+                if cycle:
+                    continue
+                if neighbour not in scc:
+                    continue
+                if neighbour in path:
+                    # cycle found, return slice of path
+                    cycle = path[path.index(neighbour):]
+                    continue
+                dfs(neighbour)
+            path.pop()
+            return None
+
+        dfs(scc[0])
+        return cycle
     
     def get_updated_relationships(self) -> List[Relationship]:
         """
@@ -739,8 +919,17 @@ test_2 = [
 
 
 if __name__ == "__main__":
-    our_graph = GlobalGraph(test_2)
-    our_graph.resolve_cycles_and_conflicts()
+    # Create some test assertions
+    test_assertions = [
+        Assertion(id="A1", content="Test assertion 1", confidence=0.8, source="test"),
+        Assertion(id="A2", content="Test assertion 2", confidence=0.7, source="test"),
+        Assertion(id="A3", content="Test assertion 3", confidence=0.9, source="test"),
+        Assertion(id="A4", content="Test assertion 4", confidence=0.6, source="test"),
+        Assertion(id="A5", content="Test assertion 5", confidence=0.8, source="test"),
+    ]
+    
+    our_graph = GlobalGraph(test_2, test_assertions)
+    our_graph.resolve_cycles_and_conflicts(automatic=True)
     # print(our_graph.ordered_graph)
     # print(our_graph.contradiction_graph)
     # print(our_graph.contradiction_relations)

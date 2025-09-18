@@ -61,7 +61,7 @@ def _add_or_update_relationship(assertion1_id: str, assertion2_id: str, relation
         del st.session_state['edit_relationship']
     
     # Update global graph with new relationships (same logic as conflict resolution)
-    st.session_state.global_graph = GlobalGraph(st.session_state.relationships)
+    st.session_state.global_graph = GlobalGraph(st.session_state.relationships, st.session_state.assertions)
     st.session_state.conflicts_resolved = False  # Need to re-resolve conflicts
     st.session_state.chose_resolution_method = False
     st.session_state.ordered_graph_generated = False
@@ -644,7 +644,7 @@ def _create_conflict_resolution():
     
     # Initialize global graph if not exists
     if not st.session_state.get("global_graph", None):
-        st.session_state.global_graph = GlobalGraph(st.session_state.get("relationships", []))
+        st.session_state.global_graph = GlobalGraph(st.session_state.get("relationships", []), st.session_state.get("assertions", []))
     
     # Check if we need to resolve conflicts
     if not st.session_state.get("conflicts_resolved", False):
