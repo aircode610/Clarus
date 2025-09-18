@@ -105,24 +105,28 @@ class ProseWorkflow:
         if state.style == "Academic":
             instruction = (
                 "You are an expert academic writer. Transform the provided structured paragraphs into a coherent, formal academic text suitable for a paper or report. "
-                "Requirements: 1) Maintain logical flow and argumentative coherence; 2) Use precise, objective, and formal tone; 3) Add connective tissue (transitions, definitions, brief context) as needed; "
-                "4) Avoid bullet points; write continuous prose; 5) Do not invent unsupported claims, but you may elaborate reasoning from the paragraphs; "
+                "Requirements: 1) Maintain logical flow and argumentative coherence; 2) Use precise, objective, and formal tone; avoid colloquial language; "
+                "3) Add necessary transitions and context to improve fluency and cohesion; 4) Avoid bullet points; write continuous prose; "
+                "5) Do not invent unsupported claims or reference new information not included in the original text; you may elaborate reasoning from the paragraphs; "
                 "6) Structure content with an introduction, logically ordered paragraphs, and a concise concluding synthesis; "
                 "7) Remove meta-commentary about the task itself; 8) Incorporate accepted issue suggestions naturally into the text; "
-                "9) Ignore declined issue suggestions but use them for context about what to avoid."
+                "9) Ignore declined issue suggestions but use them for context about what to avoid; "
+                "10) Ensure all claims with valid relations from the original text are mentioned to avoid missing any important information."
             )
             if state.add_headings:
-                instruction += " 10) Include concise section headings appropriate for academic writing."
+                instruction += " 11) Include concise section headings appropriate for academic writing."
         else:  # Technical
             instruction = (
                 "You are a senior technical writer. Transform the provided structured paragraphs into clear, precise, implementation-oriented technical text suitable for engineering documentation or a design note. "
-                "Requirements: 1) Prioritize clarity, unambiguous terminology, and actionability; 2) Use concise sentences and active voice; 3) Where helpful, include numbered steps, bullet lists, or short code-style blocks; "
-                "4) Provide definitions and assumptions upfront; 5) Include explicit inputs, outputs, constraints, and edge cases when implied by the content; 6) Avoid marketing language and rhetorical flourish; "
-                "7) Keep sections well-scoped and skimmable; 8) Incorporate accepted issue suggestions naturally into the text; "
-                "9) Ignore declined issue suggestions but use them for context about what to avoid."
+                "Requirements: 1) Prioritize clarity, unambiguous terminology, and actionability; 2) Use concise sentences and active voice; "
+                "3) Where helpful, include numbered steps, bullet lists, or short code-style blocks; 4) Provide definitions and assumptions upfront; "
+                "5) Include explicit inputs, outputs, constraints, and edge cases when implied by the content; 6) Avoid marketing language and rhetorical flourish; "
+                "7) Keep sections well-scoped and easy to read/follow; use consistent terminology throughout the text; "
+                "8) Incorporate accepted issue suggestions naturally into the text; 9) Ignore declined issue suggestions but use them for context about what to avoid; "
+                "10) Ensure all claims with valid relations from the original text are mentioned to avoid missing any important information."
             )
             if state.add_headings:
-                instruction += " 10) Include concise section headings appropriate for technical documentation."
+                instruction += " 11) Include concise section headings appropriate for technical documentation."
         
         # Create the prompt
         prompt = (
