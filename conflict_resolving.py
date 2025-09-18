@@ -265,6 +265,48 @@ class GlobalGraph:
         for node, node in to_remove:
             self.bad_graph.pop(node, None)
 
+    def get_some_cycle_from_scc(self, scc: List[str]) -> List[str]:
+        """
+        Find and return some cycle from a strongly connected component (SCC).
+
+        Args:
+            scc (List[str]): A list of assertion IDs forming a strongly connected component.
+
+        Returns:
+            List[str]: A list of assertion IDs forming a cycle within the SCC in order.
+                       Returns an empty list if no cycle is found (e.g., single-node SCC with no self-loop).
+
+        Description:
+            - Performs a depth-first search (DFS) starting from the first node in `scc`.
+            - Maintains a `path` stack to keep track of the current DFS path.
+            - Uses `nonlocal cycle` to store the first detected cycle:
+                * As soon as a neighbor node is encountered that is already in `path`,
+                  the slice of `path` from that node to the current node is assigned to `cycle`.
+                * Further DFS recursion stops once a cycle is found.
+            - Only explores neighbors that are part of the SCC.
+            - Useful for detecting a cycle that can then be resolved (e.g., by node removal).
+        """
+        path = []
+        cycle = []
+
+        def dfs(curr):
+            nonlocal cycle
+            path.append(curr)
+            for neighbour in self.good_graph_1[curr]:
+                if cycle:
+                    continue
+                if neighbour not in scc:
+                    continue
+                if neighbour in path:
+                    # cycle found, return slice of path
+                    cycle = path[path.index(neighbour):]
+                    continue
+                dfs(neighbour)
+            path.pop()
+            return None
+
+        dfs(scc[0])
+        return cycle
 
     def pick_worst_node(self, nodes_part_of_scc) -> str:
         """
@@ -364,7 +406,7 @@ class GlobalGraph:
                 if automatic:
                     remove_nodes = [random.choice(nodes_part_of_scc)]
                 else:
-                    if node := self.resolve_cycle_by_user(list_of_scc[0]):
+                    if node := self.resolve_cycle_by_user(self.get_some_cycle_from_scc(list_of_scc[0])):
                         remove_nodes = [node]
             else:
                 if automatic:
@@ -377,7 +419,7 @@ class GlobalGraph:
                         if des := self.resolve_contradiction_by_user(min_node, list(self.bad_graph[min_node])) is not None:
                             remove_nodes = [min_node] if des else list(self.bad_graph[min_node])
                     else:
-                        if node := self.resolve_cycle_by_user(list_of_scc[0]):
+                        if node := self.resolve_cycle_by_user(self.get_some_cycle_from_scc(list_of_scc[0])):
                             remove_nodes = [node]
 
             if remove_nodes != []:
