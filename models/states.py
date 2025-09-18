@@ -79,3 +79,66 @@ class StructureState(BaseModel):
     evaluated_relationships: List[Relationship] = Field(default_factory=list)
     current_input: str = Field(default="")
     chat_summary: str = Field(default="")
+
+
+class Paragraph(BaseModel):
+    """Represents a structured paragraph containing multiple assertions."""
+    id: str = Field(description="Unique identifier for the paragraph")
+    title: str = Field(description="Title or topic of the paragraph")
+    content: str = Field(description="The actual paragraph text")
+    assertion_ids: List[str] = Field(description="IDs of assertions included in this paragraph")
+    order: int = Field(description="Order of this paragraph in the document")
+    paragraph_type: Literal["introduction", "body", "conclusion", "transition"] = Field(
+        default="body", 
+        description="Type of paragraph"
+    )
+    confidence: float = Field(default=0.8, description="Confidence in paragraph quality")
+
+
+class Issue(BaseModel):
+    """Represents an issue found in a paragraph."""
+    id: str = Field(description="Unique identifier for the issue")
+    paragraph_id: str = Field(description="ID of the paragraph with the issue")
+    issue_type: Literal["missing_justification", "vague_language", "unclear_flow"] = Field(
+        description="Type of issue found"
+    )
+    severity: Literal["low", "medium", "high"] = Field(description="Severity of the issue")
+    description: str = Field(description="Description of the issue")
+    reason: str = Field(description="Explanation of why this is an issue")
+    suggestion: str = Field(description="Suggestion for how to fix the issue")
+    confidence: float = Field(default=0.8, description="Confidence in the issue detection")
+
+
+class ReviewState(BaseModel):
+    """State for the Review workflow."""
+    messages: Annotated[List[BaseMessage], add_messages] = Field(default_factory=list)
+    assertions: List[Assertion] = Field(default_factory=list)
+    relationships: List[Relationship] = Field(default_factory=list)
+    ordered_assertion_ids: List[str] = Field(default_factory=list, description="Ordered list of assertion IDs from structure mode")
+    extracted_paragraphs: List[Paragraph] = Field(default_factory=list)
+    ordered_paragraphs: List[Paragraph] = Field(default_factory=list)
+    justification_issues: List[Issue] = Field(default_factory=list)
+    vagueness_issues: List[Issue] = Field(default_factory=list)
+    flow_issues: List[Issue] = Field(default_factory=list)
+    all_issues: List[Issue] = Field(default_factory=list)
+    current_input: str = Field(default="")
+    chat_summary: str = Field(default="")
+
+
+class ProseState(BaseModel):
+    """State for the Prose workflow."""
+    messages: Annotated[List[BaseMessage], add_messages] = Field(default_factory=list)
+    assertions: List[Assertion] = Field(default_factory=list)
+    relationships: List[Relationship] = Field(default_factory=list)
+    ordered_assertion_ids: List[str] = Field(default_factory=list, description="Ordered list of assertion IDs from structure mode")
+    extracted_paragraphs: List[Paragraph] = Field(default_factory=list)
+    ordered_paragraphs: List[Paragraph] = Field(default_factory=list)
+    all_issues: List[Issue] = Field(default_factory=list)
+    accepted_issues: List[str] = Field(default_factory=list, description="IDs of accepted issues")
+    declined_issues: List[str] = Field(default_factory=list, description="IDs of declined issues")
+    style: Literal["Academic", "Technical"] = "Academic"
+    temperature: float = 0.3
+    add_headings: bool = False
+    generated_text: str = ""
+    current_input: str = Field(default="")
+    chat_summary: str = Field(default="")
