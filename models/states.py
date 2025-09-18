@@ -123,3 +123,22 @@ class ReviewState(BaseModel):
     all_issues: List[Issue] = Field(default_factory=list)
     current_input: str = Field(default="")
     chat_summary: str = Field(default="")
+
+
+class ProseState(BaseModel):
+    """State for the Prose workflow."""
+    messages: Annotated[List[BaseMessage], add_messages] = Field(default_factory=list)
+    assertions: List[Assertion] = Field(default_factory=list)
+    relationships: List[Relationship] = Field(default_factory=list)
+    ordered_assertion_ids: List[str] = Field(default_factory=list, description="Ordered list of assertion IDs from structure mode")
+    extracted_paragraphs: List[Paragraph] = Field(default_factory=list)
+    ordered_paragraphs: List[Paragraph] = Field(default_factory=list)
+    all_issues: List[Issue] = Field(default_factory=list)
+    accepted_issues: List[str] = Field(default_factory=list, description="IDs of accepted issues")
+    declined_issues: List[str] = Field(default_factory=list, description="IDs of declined issues")
+    style: Literal["Academic", "Technical"] = "Academic"
+    temperature: float = 0.3
+    add_headings: bool = False
+    generated_text: str = ""
+    current_input: str = Field(default="")
+    chat_summary: str = Field(default="")
