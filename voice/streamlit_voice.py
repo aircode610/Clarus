@@ -8,16 +8,53 @@ import io
 import zipfile
 import requests
 import streamlit as st
-from audiorecorder import audiorecorder
-from vosk import Model, KaldiRecognizer
-from pydub import AudioSegment
-
-from faster_whisper import WhisperModel
 import json
 
+# Import voice dependencies with fallback handling
+try:
+    from audiorecorder import audiorecorder
+    _AUDIORECORDER_AVAILABLE = True
+except ImportError:
+    _AUDIORECORDER_AVAILABLE = False
+    audiorecorder = None
+
+try:
+    from vosk import Model, KaldiRecognizer
+    _VOSK_AVAILABLE = True
+except ImportError:
+    _VOSK_AVAILABLE = False
+    Model = None
+    KaldiRecognizer = None
+
+try:
+    from pydub import AudioSegment
+    _PYDUB_AVAILABLE = True
+except ImportError:
+    _PYDUB_AVAILABLE = False
+    AudioSegment = None
+
+try:
+    from faster_whisper import WhisperModel
+    _FASTER_WHISPER_AVAILABLE = True
+except ImportError:
+    _FASTER_WHISPER_AVAILABLE = False
+    WhisperModel = None
+
+# Check if all voice dependencies are available
+_VOICE_AVAILABLE = all([
+    _AUDIORECORDER_AVAILABLE,
+    _VOSK_AVAILABLE,
+    _PYDUB_AVAILABLE,
+    _FASTER_WHISPER_AVAILABLE
+])
+
 @st.cache_resource(show_spinner=False)
-def get_vosk_model(lang_key: str) -> Model:
+def get_vosk_model(lang_key: str):
     """Download (if needed) and load a Vosk model."""
+    if not _VOSK_AVAILABLE:
+        st.error("Vosk is not available. Please install voice dependencies.")
+        return None
+    
     meta = VOSK_MODELS[lang_key]
     model_dir = os.path.join(MODELS_DIR, meta["dirname"])
     if not os.path.isdir(model_dir):
@@ -41,11 +78,18 @@ def get_vosk_model(lang_key: str) -> Model:
     return Model(model_dir)
 
 def get_whisper_model(lang_key: str):
+    if not _FASTER_WHISPER_AVAILABLE:
+        st.error("Faster-whisper is not available. Please install voice dependencies.")
+        return None
     model = WhisperModel("base", device="cpu")
     segments, info = model.transcribe("sample.wav")
     return segments
 
 def voice_to_text():
+    if not _VOICE_AVAILABLE:
+        st.error("Voice functionality is not available. Please install voice dependencies.")
+        return
+    
     audio = audiorecorder(
         start_prompt="Start recording",
         stop_prompt="Stop",
@@ -102,6 +146,9 @@ def load_whisper_model(model_size="small", device="auto", compute_type="int8"):
     device: "cpu", "cuda", "auto"
     compute_type: "int8", "int8_float16", "float16", "float32" (pick what's supported by your device)
     """
+    if not _FASTER_WHISPER_AVAILABLE:
+        st.error("Faster-whisper is not available. Please install voice dependencies.")
+        return None
     return WhisperModel(model_size, device=device, compute_type=compute_type)
 
 
@@ -118,6 +165,10 @@ def whisper_voice_to_text(
     start_prompt="🎤",
     stop_prompt="🛑",
 ):
+    if not _VOICE_AVAILABLE:
+        st.info("🎤 Voice input is not available. Please install voice dependencies (ffmpeg, faster-whisper, vosk, pydub, streamlit-audiorecorder) to enable voice features.")
+        return
+    
     audio = audiorecorder(
         start_prompt=start_prompt,
         stop_prompt=stop_prompt,

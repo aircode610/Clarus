@@ -13,22 +13,13 @@ from .common import display_assertions, create_assertion_groups
 from .structure_ui import structure_tab
 from .review_ui import review_tab
 from .prose_ui import prose_tab
-
-# Import idea_ui only if voice dependencies are available
-try:
-    from .idea_ui import idea_capture_tab
-    _IDEA_UI_AVAILABLE = True
-except ImportError:
-    _IDEA_UI_AVAILABLE = False
-    idea_capture_tab = None
+from .idea_ui import idea_capture_tab
 
 __all__ = [
     "display_assertions",
     "create_assertion_groups", 
     "structure_tab",
     "review_tab",
-    "prose_tab"
+    "prose_tab",
+    "idea_capture_tab"
 ]
-
-if _IDEA_UI_AVAILABLE:
-    __all__.append("idea_capture_tab")

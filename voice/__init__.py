@@ -7,6 +7,7 @@ This package contains voice input functionality including:
 - Audio format conversion
 """
 
+# Always import the voice module - it handles missing dependencies internally
 from .streamlit_voice import whisper_voice_to_text, load_whisper_model
 
 __all__ = [

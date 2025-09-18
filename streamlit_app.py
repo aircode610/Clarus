@@ -18,15 +18,7 @@ load_dotenv()
 
 import streamlit as st
 from app import create_clarus_app
-from ui import structure_tab, review_tab, prose_tab
-
-# Import idea_capture_tab only if available (depends on voice dependencies)
-try:
-    from ui import idea_capture_tab
-    _IDEA_UI_AVAILABLE = True
-except ImportError:
-    _IDEA_UI_AVAILABLE = False
-    idea_capture_tab = None
+from ui import structure_tab, review_tab, prose_tab, idea_capture_tab
 
 # Page configuration
 st.set_page_config(
@@ -72,9 +64,7 @@ def main():
         
         # Mode selector
         st.subheader("Current Mode")
-        available_modes = ["Structure", "Review", "Prose"]
-        if _IDEA_UI_AVAILABLE:
-            available_modes = ["Idea Capture"] + available_modes
+        available_modes = ["Idea Capture", "Structure", "Review", "Prose"]
         
         current_mode = st.selectbox(
             "Select Mode",
@@ -136,7 +126,7 @@ def main():
     
     # Main content area
     current_mode = st.session_state.get("current_mode", available_modes[0])
-    if current_mode == "Idea Capture" and _IDEA_UI_AVAILABLE:
+    if current_mode == "Idea Capture":
         idea_capture_tab()
     elif current_mode == "Structure":
         structure_tab()

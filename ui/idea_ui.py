@@ -5,8 +5,8 @@ This module contains the UI components for the Idea Capture mode.
 """
 
 import streamlit as st
-import voice.streamlit_voice as streamlit_voice
 from .common import display_assertions, export_assertions_button, clear_assertions_button, next_mode_button
+import voice.streamlit_voice as streamlit_voice
 
 
 def idea_capture_tab():
@@ -35,6 +35,7 @@ def idea_capture_tab():
             st.session_state.transcript = ""
             st.session_state.message_sent = False
 
+        # Voice input
         streamlit_voice.whisper_voice_to_text(
             start_prompt="🎤 Voice Input",
             stop_prompt="🛑 Stop Recording",
