@@ -1024,10 +1024,12 @@ def prose_tab():
     st.session_state.result_text = plan_text
 
     # Model and options
-    col1, col2 = st.columns([1, 3])
+    col1, col2, col3 = st.columns([1, 1.5, 1.5])
     with col1:
         temperature = st.slider("Creativity", 0.0, 1.0, 0.3, 0.1, help="Lower = more formal/precise, Higher = more creative")
     with col2:
+        style = st.selectbox("Style", ["Academic", "Technical"], index=0, help="Choose the writing style for the generated text")
+    with col3:
         add_headings = st.checkbox("Include suggested headings", value=False)
 
     # Generation button
@@ -1035,19 +1037,32 @@ def prose_tab():
     if disabled:
         st.warning("The plan is empty. Please provide or generate a plan in Review mode.")
 
-    if st.button("Generate Academic Text", disabled=disabled, type="primary"):
+    button_label = f"Generate {style} Text"
+    spinner_label = f"Generating {style.lower()} text..."
+
+    if st.button(button_label, disabled=disabled, type="primary"):
         try:
-            with st.spinner("Generating academic text..."):
+            with st.spinner(spinner_label):
                 llm = ChatOpenAI(model="gpt-4o-mini", temperature=temperature)
-                instruction = (
-                    "You are an expert academic writer. Expand the provided plan into a coherent, formal academic text suitable for a short paper or report section. "
-                    "Requirements: 1) Maintain logical flow and argumentative coherence; 2) Use precise, objective, and formal tone; 3) Add connective tissue (transitions, definitions, brief context) as needed; "
-                    "4) Avoid bullet points; write continuous prose; 5) Do not invent unsupported claims, but you may elaborate reasoning from the plan; "
-                    "6) Where appropriate, structure content with an introduction, logically ordered paragraphs, and a concise concluding synthesis; "
-                    "7) Remove meta-commentary about the task itself."
-                )
-                if add_headings:
-                    instruction += " 8) Include concise section headings appropriate for academic writing."
+                if style == "Academic":
+                    instruction = (
+                        "You are an expert academic writer. Expand the provided plan into a coherent, formal academic text suitable for a short paper or report section. "
+                        "Requirements: 1) Maintain logical flow and argumentative coherence; 2) Use precise, objective, and formal tone; 3) Add connective tissue (transitions, definitions, brief context) as needed; "
+                        "4) Avoid bullet points; write continuous prose; 5) Do not invent unsupported claims, but you may elaborate reasoning from the plan; "
+                        "6) Where appropriate, structure content with an introduction, logically ordered paragraphs, and a concise concluding synthesis; "
+                        "7) Remove meta-commentary about the task itself."
+                    )
+                    if add_headings:
+                        instruction += " 8) Include concise section headings appropriate for academic writing."
+                else:
+                    instruction = (
+                        "You are a senior technical writer. Expand the provided plan into clear, precise, implementation-oriented technical text suitable for engineering documentation or a design note. "
+                        "Requirements: 1) Prioritize clarity, unambiguous terminology, and actionability; 2) Use concise sentences and active voice; 3) Where helpful, include numbered steps, bullet lists, or short code-style blocks; "
+                        "4) Provide definitions and assumptions upfront; 5) Include explicit inputs, outputs, constraints, and edge cases when implied by the plan; 6) Avoid marketing language and rhetorical flourish; "
+                        "7) Keep sections well-scoped and skimmable."
+                    )
+                    if add_headings:
+                        instruction += " 8) Include concise section headings appropriate for technical documentation."
 
                 prompt = (
                     f"{instruction}\n\n"
@@ -1057,19 +1072,19 @@ def prose_tab():
                 )
                 message = HumanMessage(content=prompt)
                 response = llm.invoke([message])
-                academic_text = getattr(response, "content", str(response))
-                st.session_state.academic_text = academic_text
+                generated_text = getattr(response, "content", str(response))
+                st.session_state.academic_text = generated_text
         except Exception as e:
-            st.error(f"Failed to generate academic text: {e}")
+            st.error(f"Failed to generate {style.lower()} text: {e}")
 
     # Show output if available
     if st.session_state.get("academic_text"):
-        st.subheader("Generated Academic Text")
-        st.text_area("Academic Text", value=st.session_state.academic_text, height=420, key="academic_text_display")
+        st.subheader(f"Generated {style} Text")
+        st.text_area(f"{style} Text", value=st.session_state.academic_text, height=420, key="academic_text_display")
         st.download_button(
-            label="Download Academic Text (.txt)",
+            label=f"Download {style} Text (.txt)",
             data=st.session_state.academic_text,
-            file_name="academic_text.txt",
+            file_name=f"{style.lower()}_text.txt",
             mime="text/plain"
         )
 
