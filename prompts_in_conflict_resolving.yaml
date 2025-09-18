@@ -1,0 +1,99 @@
+prompts:
+  compare_two_relations_with_parent_bool:
+    messages:
+      - role: system
+        content: |
+          You compare TWO Relationship objects that attach to the SAME parent and have the SAME relationship_type.
+          Decide which child assertion is the better fit under this parent.
+
+          Decision rules (apply in order; stop at first decisive difference):
+          1) Relation fit to the parent within this relation_type:
+             - cause: clearer, more direct causal mechanism > vague/indirect
+             - condition: precise, operational, testable condition > broad/ambiguous
+             - evidence: specific, measurable, source-backed > anecdotal/general
+             - contradiction: genuine, direct incompatibility > superficial difference
+             - background: concise, relevant, defining context > verbose/tangential
+          2) Specificity and clarity: concrete, unambiguous language wins.
+          3) Logical tightness: fewer leaps; aligns with parent’s scope.
+          4) Non-redundancy: adds complementary info rather than restating parent.
+          5) If still tied: shorter, crisper phrasing wins.
+          6) Final tiebreaker: lexicographic by child id to be deterministic.
+
+          IMPORTANT:
+          - Judge ONLY within the given relation_type and the given parent.
+          - Return ONLY a bare JSON boolean: true if the FIRST is better, false otherwise.
+          - Do NOT include any other text.
+
+          EXAMPLES (return bare JSON boolean):
+          Parent: "Index rebuilds cause service downtime."
+          relation_type: "cause"
+          A: "Rebuild locks the write path for 7–12s per shard."
+          B: "Engineers are busy during rebuilds."
+          → true
+
+          Parent: "Our algorithm reduces latency in real-time search."
+          relation_type: "evidence"
+          A: "Some users said it felt faster."
+          B: "A/B test on 10M queries shows median latency ↓12%."
+          → false
+      - role: human
+        content: |
+          parent_id: {parent_id}
+          relation_type: {relation_type}
+
+          first:
+            assertion1_id: {r1.assertion1_id}
+            assertion2_id: {r1.assertion2_id}
+            confidence: {r1.confidence}
+            explanation: {r1.explanation}
+
+          second:
+            assertion1_id: {r2.assertion1_id}
+            assertion2_id: {r2.assertion2_id}
+            confidence: {r2.confidence}
+            explanation: {r2.explanation}
+
+  compare_two_intro_assertions_bool:
+    messages:
+      - role: system
+        content: |
+          You compare TWO standalone assertions for the BEGINNING of a document (intro).
+          Choose which one is a better opening assertion.
+
+          Intro suitability (evaluate in this order; deterministic):
+          1) Orientation & scope:
+             - Clear definition of topic / what it is
+             - Problem statement / why it matters
+             - Goal / thesis / high-level claim or promise
+          2) Reader navigation:
+             - High-level approach/idea (one sentence)
+             - Contributions / deliverables (brief)
+             - (Optional) roadmap/structure preview
+          3) Context (brief, essential background only)
+          4) Defer details:
+             - Avoid fine-grained metrics, parameters, implementation, edge cases
+          5) Quality filters:
+             - Clarity (atomic, declarative), coherence, non-redundancy
+          6) If still tied: shorter, crisper phrasing wins.
+          7) Final tiebreaker: lexicographic by id.
+
+          IMPORTANT:
+          - Judge fitness for the OPENING section, not overall importance.
+          - Return ONLY a bare JSON boolean: true if the FIRST is better, false otherwise.
+          - Do NOT include any other text.
+
+          EXAMPLES (return bare JSON boolean):
+          A: "Writing technical documents is difficult due to cognitive overload."
+          B: "Latency decreased by 12% on a 10M-query A/B test."
+          → true
+
+          A: "This project introduces Clarus, an AI-assisted writing tool."
+          B: "We measured P95 latency improvements of 7%."
+          → true
+      - role: human
+        content: |
+          first_id: {first_id}
+          first_text: {first_text}
+
+          second_id: {second_id}
+          second_text: {second_text}
