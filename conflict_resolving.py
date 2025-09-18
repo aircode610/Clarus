@@ -452,8 +452,8 @@ class GlobalGraph:
             - If the weights are equal, the comparison is deferred to LLM.
             - Designed to assist in ordering or selecting relationships when constructing or analyzing the graph.
         """
-        relation_type1 = relation1.gettattr("relationship_type", None)
-        relation_type2 = relation2.gettattr("relationship_type", None)
+        relation_type1 = relation1.relationship_type
+        relation_type2 = relation2.relationship_type
         weights = {"cause": 0, "condition": 1, "evidence": 2, "contrast": 3, "background": 4}
         if weights[relation_type1] != weights[relation_type2]:
             return weights[relation_type1] < weights[relation_type2]
@@ -483,14 +483,21 @@ class GlobalGraph:
             - If `parent_id` is empty, the comparison is deferred to LLM.
             - Helps establish an ordered structure among children for DAG traversal, visualization, or analysis.
         """
-        def comparison(node1: str, node2: str) -> bool:
+        def comparison(node1: str, node2: str) -> int:
             if parent_id == "":
                 # TODO ask which one is better from Amirali the LLM
-                return
+                return 0
             relation1 = self.relationship_for_pair.get((parent_id, node1))
             relation2 = self.relationship_for_pair.get((parent_id, node2))
-            if relation1 is None or relation2 is None:
-                return True
+
+            if relation1 is None and relation2 is None:
+                return 0
+            if relation1 is None:
+                return -1  # or 1, depending on how you want to order
+            if relation2 is None:
+                return 1
+
+            # assume compare_two_relations returns -1, 0, or 1
             return self.compare_two_relations(relation1, relation2)
 
         return sorted(children, key=cmp_to_key(comparison))
