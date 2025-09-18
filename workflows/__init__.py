@@ -12,6 +12,7 @@ from .idea_capture import IdeaCaptureWorkflow, create_idea_capture_workflow, cre
 from .structure import StructureWorkflow, create_structure_workflow, create_structure_graph, evaluate_relationship_quality
 from .review import ReviewWorkflow, create_review_workflow, create_review_graph
 from .prose import ProseWorkflow, create_prose_workflow
+from .conflict_resolving import GlobalGraph
 
 __all__ = [
     "IdeaCaptureWorkflow",
@@ -25,5 +26,6 @@ __all__ = [
     "create_review_workflow",
     "create_review_graph",
     "ProseWorkflow",
-    "create_prose_workflow"
+    "create_prose_workflow",
+    "GlobalGraph"
 ]

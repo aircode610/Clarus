@@ -14,9 +14,8 @@ import streamlit as st
 import json
 from typing import List, Dict, Any
 
-import streamlit_voice
-import conflict_resolving
-from conflict_resolving import GlobalGraph
+import voice.streamlit_voice as streamlit_voice
+from workflows.conflict_resolving import GlobalGraph
 from models import Assertion, Relationship
 from app import ClarusApp, create_clarus_app
 from workflows.structure import evaluate_relationship_quality
