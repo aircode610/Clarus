@@ -356,7 +356,7 @@ class GlobalGraph:
         min_node: str | None = None
         bad_nodes = 0
         for node in nodes_part_of_scc:
-            score = len(self.good_graph_1[node]) + len(self.good_graph_2[node]) - len(self.bad_graph.get(node, set()))
+            score = len(self.good_graph_1.get(node, set())) + len(self.good_graph_2.get(node, set())) - len(self.bad_graph.get(node, set()))
             if score < min_score:
                 min_score = score
                 min_node = node
@@ -464,7 +464,7 @@ class GlobalGraph:
         """
         starter_nodes = []
         for node in self.nodes:
-            if len(self.good_graph_2[node]) == 0:
+            if len(self.good_graph_2.get(node, set())) == 0:
                 starter_nodes.append(node)
         return starter_nodes
 
@@ -486,7 +486,7 @@ class GlobalGraph:
             - Essential for DAG traversal or topological sorting: a node can only be processed
               once all its parents are already visited.
         """
-        return self.number_of_visited_parents[node] == len(self.good_graph_2[node])
+        return self.number_of_visited_parents[node] == len(self.good_graph_2.get(node, set()))
 
     def get_llm_answer_with_parent(self, rel1: Relationship, rel2: Relationship):
         """Get LLM comparison for two relationships with the same parent."""
@@ -709,7 +709,7 @@ second_text: {second_text}""")
               nodes are processed in dependency order.
         """
         children = []
-        for child in self.good_graph_1[node]:
+        for child in self.good_graph_1.get(node, set()):
             self.number_of_visited_parents[child] += 1
             if self.check_used_all_parents(child):
                 children.append(child)
@@ -790,7 +790,7 @@ second_text: {second_text}""")
         def dfs(curr):
             nonlocal cycle
             path.append(curr)
-            for neighbour in self.good_graph_1[curr]:
+            for neighbour in self.good_graph_1.get(curr, set()):
                 if cycle:
                     continue
                 if neighbour not in scc:
