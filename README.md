@@ -58,10 +58,12 @@ Clarus/
 │   ├── review_ui.py       # Review and editing interface
 │   ├── prose_ui.py        # Prose generation interface
 │   └── common.py          # Shared UI components
+|
 ├── voice/                 # Voice input functionality
 │   └── streamlit_voice.py # Voice-to-text integration
+|
 ├── streamlit_app.py       # Main application entry point
-├── app.py                 # Alternative Flask app (if needed)
+├── app.py                 # Alternative app script(if needed)
 └── langgraph.json         # LangGraph configuration
 ```
 
@@ -89,12 +91,27 @@ Generate fluent, well-structured text from your organized content.
 
 ![Prose Workflow](assets/prose.png)
 
+### ⚖️ Conflict Resolving
+Automatically detect and resolve contradictions and circular dependencies in your assertion network.
+
+The conflict resolver works by:
+- **Detecting Cycles**: Identifies strongly connected components (SCCs) that create circular dependencies
+- **Finding Contradictions**: Locates conflicting assertions that cannot coexist
+- **Smart Resolution**: Uses confidence scores and relationship types to determine which assertions to remove
+- **User Control**: Offers both automatic and manual resolution modes
+
+**Resolution Strategies:**
+- **Automatic Mode**: Removes the least confident assertions or random nodes from cycles
+- **Manual Mode**: Presents conflicts to users for informed decision-making
+- **Graph Optimization**: Maintains logical flow while eliminating inconsistencies
+
 ## Features
 
 - **💡 Idea Capture**: Extract structured assertions from your thoughts and ideas
 - **🏗️ Structure**: Organize and visualize relationships between assertions
 - **🔍 Review**: Transform assertions into structured paragraphs with issue detection
 - **📖 Prose**: Generate fluent text from structured content
+- **⚖️ Conflict Resolving**: Automatically detect and resolve contradictions and circular dependencies
 - **🎤 Voice Input**: Dictate your ideas using voice-to-text (requires ffmpeg)
 
 ## Dependencies
@@ -103,4 +120,4 @@ The application uses a minimal set of dependencies:
 - **Core**: LangGraph, LangChain, Streamlit
 - **AI**: OpenAI API integration
 - **Voice**: Faster-Whisper, Vosk (optional)
-- **Visualization**: NetworkX, Plotly
+- **Visualization**: Plotly
