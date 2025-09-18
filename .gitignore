@@ -159,7 +159,6 @@ secrets.toml
 data/
 datasets/
 *.csv
-*.json
 *.parquet
 *.pkl
 *.pickle

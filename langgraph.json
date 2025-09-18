@@ -1,0 +1,10 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "idea_capture": "./workflows/idea_capture.py:create_idea_capture_workflow",
+    "structure_mode": "./workflows/structure.py:create_structure_workflow",
+    "review_mode": "./workflows/review.py:create_review_workflow",
+    "prose_mode": "./workflows/prose.py:create_prose_workflow"
+  },
+  "env": ".env"
+}

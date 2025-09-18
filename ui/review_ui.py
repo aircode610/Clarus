@@ -151,6 +151,36 @@ def review_tab():
                 resolved_percentage = ((accepted_count + declined_count) / len(st.session_state.all_issues)) * 100
                 st.progress(resolved_percentage / 100)
                 st.caption(f"Issue Resolution Progress: {resolved_percentage:.1f}%")
+            
+            # Bulk action buttons for pending issues
+            if pending_count > 0:
+                st.markdown("### 🚀 Bulk Actions")
+                st.markdown(f"**{pending_count} issues pending review.** Use bulk actions to quickly handle all remaining issues:")
+                
+                col_accept_all, col_decline_all = st.columns(2)
+                
+                with col_accept_all:
+                    if st.button("✅ Accept All Remaining", 
+                                help=f"Accept all {pending_count} pending issue suggestions", 
+                                type="primary",
+                                use_container_width=True):
+                        # Add all pending issues to accepted list
+                        for issue in st.session_state.all_issues:
+                            if issue.id not in st.session_state.accepted_issues and issue.id not in st.session_state.declined_issues:
+                                st.session_state.accepted_issues.append(issue.id)
+                        st.rerun()
+                
+                with col_decline_all:
+                    if st.button("❌ Decline All Remaining", 
+                                help=f"Decline all {pending_count} pending issue suggestions", 
+                                use_container_width=True):
+                        # Add all pending issues to declined list
+                        for issue in st.session_state.all_issues:
+                            if issue.id not in st.session_state.accepted_issues and issue.id not in st.session_state.declined_issues:
+                                st.session_state.declined_issues.append(issue.id)
+                        st.rerun()
+                
+                st.markdown("---")
         
         # Display each paragraph with issues
         for i, paragraph in enumerate(st.session_state.paragraphs, 1):
